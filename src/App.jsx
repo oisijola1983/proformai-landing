@@ -177,8 +177,8 @@ function SignUpPage() {
 function AppRoutes() {
   return (
     <Routes>
-      <Route path="/app/sign-in" element={<SignInPage />} />
-      <Route path="/app/sign-up" element={<SignUpPage />} />
+      <Route path="/app/sign-in/*" element={<SignInPage />} />
+      <Route path="/app/sign-up/*" element={<SignUpPage />} />
       <Route
         path="/app/billing"
         element={
