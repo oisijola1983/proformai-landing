@@ -1,4 +1,5 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
+import { useAuth } from "@clerk/clerk-react";
 
 const STEPS = ["Upload", "Property", "Financials", "Market", "Analysis"];
 const PTYPES = ["Multifamily","Single Family Portfolio","Mixed-Use","Land/Development","Office","Retail","Industrial","Self-Storage","Mobile Home Park","Hotel"];
@@ -453,6 +454,7 @@ Return EXACTLY this JSON (6-12 metrics, 3-8 missing/flags/questions, 15-25 DD it
 
 /* ═══ MAIN APP ═══ */
 export default function App() {
+  const { getToken } = useAuth();
   const [step, setStep] = useState(0);
   const [files, setFiles] = useState([]);
   const [extracting, setExtracting] = useState(false);
@@ -463,6 +465,27 @@ export default function App() {
   const [analysis, setAnalysis] = useState(null);
   const [loading, setLoading] = useState(false);
   const [followUps, setFollowUps] = useState([]);
+  const [credits, setCredits] = useState(null);
+  const [creditError, setCreditError] = useState("");
+
+  async function loadCredits() {
+    try {
+      setCreditError("");
+      const token = await getToken();
+      const res = await fetch("/api/credits", {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || "Failed to load credits");
+      setCredits(Number(json.credits || 0));
+    } catch (e) {
+      setCreditError(e.message || "Failed to load credits");
+    }
+  }
+
+  useEffect(() => {
+    loadCredits();
+  }, []);
 
   async function handleExtract() {
     setExtracting(true);
@@ -481,11 +504,37 @@ export default function App() {
   async function runAnalysis() {
     setLoading(true); setAnalysis(null); setFollowUps([]);
     try {
-      const resp = await fetch("/api/claude", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ model: "claude-sonnet-4-20250514", max_tokens: 4000, messages: [{ role: "user", content: buildPrompt(d, docCtx) }] }) });
+      setCreditError("");
+      const token = await getToken();
+      const resp = await fetch("/api/analyze", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ model: "claude-sonnet-4-20250514", max_tokens: 4000, messages: [{ role: "user", content: buildPrompt(d, docCtx) }] })
+      });
       const res = await resp.json();
+
+      if (!resp.ok) {
+        if (resp.status === 402) {
+          setCredits(Number(res.credits || 0));
+          setCreditError("No credits remaining. Buy a credit pack to continue.");
+          return;
+        }
+        throw new Error(res.error || "Analysis failed");
+      }
+
       const raw = res.content?.map(c => c.text || "").join("") || "";
       setAnalysis(parseJSON(raw));
-    } catch (e) { setAnalysis({ verdict: "Error: " + e.message, scores: {}, metrics: [], missingData: [], redFlags: [], questions: [], ddChecklist: [] }); }
+      if (typeof res.creditsRemaining === "number") {
+        setCredits(res.creditsRemaining);
+      } else {
+        await loadCredits();
+      }
+    } catch (e) {
+      setAnalysis({ verdict: "Error: " + e.message, scores: {}, metrics: [], missingData: [], redFlags: [], questions: [], ddChecklist: [] });
+    }
     setLoading(false);
   }
 
@@ -507,7 +556,15 @@ export default function App() {
           <div style={{ width: 32, height: 32, borderRadius: 8, background: B.a, display: "flex", alignItems: "center", justifyContent: "center" }}><span style={{ color: "#fff", fontSize: 14, fontWeight: 700 }}>U</span></div>
           <div><h1 style={{ fontSize: 14, fontWeight: 700, color: B.t, margin: 0 }}>ProformAI</h1><p style={{ fontSize: 11, color: B.td, margin: 0 }}>AI-Powered Deal Underwriting</p></div>
         </div>
-        {d.name && <div style={{ textAlign: "right" }}><p style={{ fontSize: 12, fontWeight: 500, color: B.t, margin: 0 }}>{d.name}</p><p style={{ fontSize: 11, color: B.td, margin: 0 }}>{[d.market, d.propertyType].filter(Boolean).join(" · ")}</p></div>}
+        <div style={{ textAlign: "right" }}>
+          {d.name && <><p style={{ fontSize: 12, fontWeight: 500, color: B.t, margin: 0 }}>{d.name}</p><p style={{ fontSize: 11, color: B.td, margin: 0 }}>{[d.market, d.propertyType].filter(Boolean).join(" · ")}</p></>}
+          <p style={{ fontSize: 11, color: credits === 0 ? B.w : B.tm, margin: 0, marginTop: d.name ? 4 : 0 }}>
+            Credits: {credits ?? "—"}
+          </p>
+          {credits === 0 && (
+            <a href="/app/billing" style={{ fontSize: 11, color: B.a, textDecoration: "none" }}>Buy credits</a>
+          )}
+        </div>
       </header>
 
       <div style={{ maxWidth: 800, margin: "0 auto", padding: "32px 24px" }}>
@@ -517,6 +574,12 @@ export default function App() {
             <button key={st} onClick={() => setStep(i)} style={{ flex: 1, padding: "10px 0", fontSize: 12, fontWeight: 500, borderRadius: 8, cursor: "pointer", background: i === step ? B.a : i < step ? B.as : "transparent", color: i === step ? "#fff" : i < step ? B.a : B.td, border: `1px solid ${i === step ? B.a : B.bd}` }}>{st}</button>
           ))}
         </div>
+
+        {creditError && (
+          <div style={{ marginBottom: 16, borderRadius: 10, padding: 10, background: B.ws, border: `1px solid ${B.w}55`, color: B.w, fontSize: 12 }}>
+            {creditError} <a href="/app/billing" style={{ color: B.a, textDecoration: "none" }}>Open billing</a>
+          </div>
+        )}
 
         {/* Content */}
         <div style={{ background: B.s, border: `1px solid ${B.bd}`, borderRadius: 16, padding: 24 }}>
