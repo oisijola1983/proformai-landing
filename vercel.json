@@ -5,6 +5,8 @@
   "routes": [
     { "src": "/api/(.*)", "dest": "/api/$1" },
     { "src": "^/$", "dest": "/landing.html" },
+    { "src": "/privacy", "dest": "/privacy.html" },
+    { "src": "/terms", "dest": "/terms.html" },
     { "src": "/app(?:/(.*))?", "dest": "/index.html" }
   ]
 }
