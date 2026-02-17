@@ -45,7 +45,7 @@ function ProtectedRoute({ children }) {
     <>
       <SignedIn>{children}</SignedIn>
       <SignedOut>
-        <Navigate to="/app/sign-in" replace state={{ from: location.pathname }} />
+        <Navigate to="/app/sign-up" replace state={{ from: location.pathname }} />
       </SignedOut>
     </>
   );
