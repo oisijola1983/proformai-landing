@@ -54,6 +54,7 @@ function ProtectedRoute({ children }) {
 function BillingPage() {
   const { getToken } = useAuth();
   const { user } = useUser();
+  const location = useLocation();
   const [credits, setCredits] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -62,6 +63,11 @@ function BillingPage() {
     () => user?.primaryEmailAddress?.emailAddress || user?.emailAddresses?.[0]?.emailAddress || "",
     [user]
   );
+
+  const checkoutStatus = useMemo(() => {
+    const value = new URLSearchParams(location.search).get("checkout");
+    return value === "success" || value === "cancelled" ? value : null;
+  }, [location.search]);
 
   async function loadCredits() {
     try {
@@ -80,7 +86,7 @@ function BillingPage() {
 
   useEffect(() => {
     loadCredits();
-  }, []);
+  }, [location.search]);
 
   async function startCheckout() {
     try {
@@ -112,6 +118,16 @@ function BillingPage() {
       <div style={{ maxWidth: 760, margin: "0 auto", padding: 24 }}>
         <h2 style={{ marginTop: 8 }}>Billing & Credits</h2>
         <p style={{ color: "#94a3b8", fontSize: 14 }}>Purchase additional underwriting credits.</p>
+        {checkoutStatus === "success" && (
+          <div style={{ border: "1px solid #14532d", background: "#052e16", color: "#86efac", borderRadius: 10, padding: 10, fontSize: 13, marginTop: 12 }}>
+            Payment received. Credits should update in a few seconds.
+          </div>
+        )}
+        {checkoutStatus === "cancelled" && (
+          <div style={{ border: "1px solid #7f1d1d", background: "#450a0a", color: "#fca5a5", borderRadius: 10, padding: 10, fontSize: 13, marginTop: 12 }}>
+            Checkout cancelled. No charge was made.
+          </div>
+        )}
         <div style={{ border: "1px solid #1e293b", background: "#111827", borderRadius: 12, padding: 20, marginTop: 16 }}>
           <div style={{ fontSize: 13, color: "#94a3b8" }}>Current Balance</div>
           <div style={{ fontSize: 42, fontWeight: 700 }}>{credits ?? "—"}</div>

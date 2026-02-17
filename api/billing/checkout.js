@@ -12,7 +12,9 @@ export default async function handler(req, res) {
     const priceId = process.env.STRIPE_CREDIT_PRICE_ID;
     if (!priceId) return res.status(500).json({ error: "Missing STRIPE_CREDIT_PRICE_ID" });
 
-    const { email } = req.body || {};
+    const parsedBody = typeof req.body === "string" ? JSON.parse(req.body || "{}") : (req.body || {});
+    const email = typeof parsedBody.email === "string" ? parsedBody.email.trim() : undefined;
+
     const session = await stripe.checkout.sessions.create({
       mode: "payment",
       line_items: [{ price: priceId, quantity: 1 }],

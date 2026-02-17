@@ -3,6 +3,19 @@ import { getStripe } from "../_lib/stripe.js";
 
 const clerkClient = createClerkClient({ secretKey: process.env.CLERK_SECRET_KEY });
 
+async function getRawBody(req) {
+  if (typeof req.body === "string") return req.body;
+
+  const chunks = [];
+  for await (const chunk of req) {
+    chunks.push(typeof chunk === "string" ? Buffer.from(chunk) : chunk);
+  }
+
+  if (chunks.length) return Buffer.concat(chunks).toString("utf8");
+  if (req.body && typeof req.body === "object") return JSON.stringify(req.body);
+  return "";
+}
+
 export default async function handler(req, res) {
   if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
 
@@ -12,7 +25,7 @@ export default async function handler(req, res) {
     const secret = process.env.STRIPE_WEBHOOK_SECRET;
     if (!signature || !secret) return res.status(400).json({ error: "Missing webhook signature config" });
 
-    const body = typeof req.body === "string" ? req.body : JSON.stringify(req.body);
+    const body = await getRawBody(req);
     const event = stripe.webhooks.constructEvent(body, signature, secret);
 
     if (event.type === "checkout.session.completed") {
