@@ -5,6 +5,23 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>ProformAI — AI Real Estate Underwriting in 90 Seconds</title>
 <meta name="description" content="Upload a rent roll, T-12, or offering memo. Get investor-ready pro formas, risk scores, and market comps in under 2 minutes. Built for sponsors who move fast.">
+<meta name="robots" content="index,follow">
+<link rel="canonical" href="https://proformai.app/">
+
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://proformai.app/">
+<meta property="og:title" content="ProformAI — AI Real Estate Underwriting in 90 Seconds">
+<meta property="og:description" content="Upload a rent roll, T-12, or offering memo. Get investor-ready pro formas, risk scores, and market comps in under 2 minutes.">
+<meta property="og:image" content="https://proformai.app/og-image.svg">
+
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="ProformAI — AI Real Estate Underwriting in 90 Seconds">
+<meta name="twitter:description" content="Upload a rent roll, T-12, or offering memo. Get investor-ready pro formas in under 2 minutes.">
+<meta name="twitter:image" content="https://proformai.app/og-image.svg">
+
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<link rel="apple-touch-icon" href="/favicon.svg">
+
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
@@ -357,6 +374,24 @@ footer .links a:hover{color:var(--text)}
   .metrics-bar{grid-template-columns:1fr}
 }
 </style>
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  "name": "ProformAI",
+  "applicationCategory": "BusinessApplication",
+  "operatingSystem": "Web",
+  "url": "https://proformai.app/",
+  "description": "AI real estate underwriting platform that converts uploaded deal docs into pro formas and risk scores.",
+  "offers": {
+    "@type": "Offer",
+    "priceCurrency": "USD",
+    "price": "0",
+    "description": "Early access with 5 free credits"
+  }
+}
+</script>
+
 </head>
 <body>
 <div class="grid-bg"></div>
@@ -648,12 +683,12 @@ footer .links a:hover{color:var(--text)}
     <div class="links">
       <a href="#features">Features</a>
       <a href="#pricing">Pricing</a>
-      <a href="/cdn-cgi/l/email-protection#d2bab7bebebd92a7bcb6b7a0a5a0bba6b7b3bbfcb1bdbf">Contact</a>
+      <a href="mailto:hello@proformai.app">Contact</a>
     </div>
   </footer>
 </div>
 
-<script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
+<script>
 // Scroll reveal
 const observer = new IntersectionObserver((entries) => {
   entries.forEach(e => { if(e.isIntersecting) e.target.classList.add('visible') });
@@ -661,21 +696,50 @@ const observer = new IntersectionObserver((entries) => {
 document.querySelectorAll('.reveal').forEach(el => observer.observe(el));
 
 // Waitlist form
-function handleSubmit(e) {
+async function handleSubmit(e) {
   e.preventDefault();
-  const email = document.getElementById('emailInput').value;
+  const email = document.getElementById('emailInput').value.trim();
   const btn = document.getElementById('submitBtn');
   const note = document.getElementById('formNote');
-  
-  btn.textContent = 'Added ✓';
-  btn.style.background = '#16a34a';
-  note.textContent = `${email} is on the list. We'll be in touch soon.`;
-  note.style.color = 'var(--accent)';
-  
-  // In production: send to Mailchimp/Loops API
-  console.log('Waitlist signup:', email);
+  const originalText = btn.textContent;
+  btn.textContent = 'Joining...';
+  btn.disabled = true;
+  btn.style.opacity = '0.7';
+  try {
+    const res = await fetch('/api/waitlist', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email }),
+    });
+    const data = await res.json();
+    if (data.success) {
+      btn.textContent = 'Added ✓';
+      btn.style.background = '#16a34a';
+      btn.style.opacity = '1';
+      note.textContent = data.message === 'already_subscribed'
+        ? "You're already on the list! We'll be in touch soon."
+        : email + ' is on the list. We will be in touch soon.';
+      note.style.color = 'var(--accent)';
+      document.getElementById('emailInput').value = '';
+    } else { throw new Error(data.error); }
+  } catch (err) {
+    btn.textContent = originalText;
+    btn.style.opacity = '1';
+    btn.disabled = false;
+    note.textContent = 'Something went wrong. Please try again.';
+    note.style.color = '#ef4444';
+  }
 }
 
 // Smooth nav
 document.querySelectorAll('a[href^="#"]').forEach(a => {
   a.addEventListener('click', e => {
+    e.preventDefault();
+    const target = document.querySelector(a.getAttribute('href'));
+    if (target) target.scrollIntoView({ behavior: 'smooth' });
+  });
+});
+</script>
+<script defer src="/_vercel/insights/script.js"></script>
+</body>
+</html>
