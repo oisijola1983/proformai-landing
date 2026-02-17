@@ -7,6 +7,7 @@
     { "src": "^/$", "dest": "/landing.html" },
     { "src": "/privacy", "dest": "/privacy.html" },
     { "src": "/terms", "dest": "/terms.html" },
+    { "src": "/404", "dest": "/404.html" },
     { "src": "/app(?:/(.*))?", "dest": "/index.html" }
   ]
 }
