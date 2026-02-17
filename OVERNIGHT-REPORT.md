@@ -14,9 +14,16 @@ Repo: https://github.com/oisijola1983/proformai-landing
   - Improved Loops duplicate-email handling in `api/waitlist.js`
 
 ### Completed in this overnight run
-- Added welcome email draft file:
-  - `emails/welcome-email.md`
-- Moved Vercel Analytics script to right before `</body>` in `public/landing.html`
+- Commit `aa5346b`:
+  - Added welcome email draft file `emails/welcome-email.md`
+  - Moved Vercel Analytics script to right before `</body>` in `public/landing.html`
+  - Added this report file
+- Linked local repo to Vercel project `woles-projects-df53213a/underwrite-ai`
+- Added `LOOPS_API_KEY` to:
+  - Preview
+  - Development
+  - (Production already existed)
+- Deployed production successfully and aliased to `https://proformai.app`
 - Performed end-to-end waitlist verification against production and Loops API
 - Removed tokenized GitHub remote URL from local repo config:
   - `origin` now set to `https://github.com/oisijola1983/proformai-landing.git`
@@ -49,32 +56,24 @@ Repo: https://github.com/oisijola1983/proformai-landing
 
 ## 3) Blocked items (with reason)
 
-1. **Vercel CLI login + env updates + analytics enable**
-   - Blocked by missing authenticated Vercel CLI session in this runtime.
-   - `npx vercel login` reached device auth URL and waited for human web sign-in.
-   - As a result, these remain unexecuted by CLI:
-     - `vercel link`
-     - add `LOOPS_API_KEY` to Preview/Development via CLI
-     - `vercel analytics enable`
-     - `vercel --prod` deploy from CLI
-
-2. **Loops dashboard-only branding settings**
+1. **Loops dashboard-only branding settings**
    - Company name (`100%` -> `ProformAI`) and sender avatar are dashboard-level settings not completed in this run.
 
-3. **Loops welcome automation activation**
+2. **Loops welcome automation activation**
    - API endpoints available were validated (`contacts/find`, `transactional` list), but sequence/workflow creation should be finalized in dashboard UI.
+
+3. **Vercel Analytics project toggle (CLI command unavailable)**
+   - Tracking script is now included on the landing page.
+   - `vercel analytics enable` is not available as a direct CLI command in this runtime; enable/confirm in Vercel dashboard if required.
 
 ## 4) Recommendations (next priorities)
 
-1. Complete Vercel auth locally, then run:
-   - `npx vercel link`
-   - add `LOOPS_API_KEY` for Preview/Development
-   - `npx vercel analytics enable`
-2. In Loops dashboard:
+1. In Loops dashboard:
    - Set company name to **ProformAI**
    - Add sender avatar
    - Create/activate waitlist welcome automation using `emails/welcome-email.md`
-3. Send a deliverability test email to primary inboxes and verify inbox/spam placement.
+2. Send a deliverability test email to primary inboxes and verify inbox/spam placement.
+3. In Vercel dashboard, confirm analytics visibility/enablement for the project.
 4. Rotate the exposed GitHub token and issue a new one (token was shared in chat).
 
 ## 5) Remaining roadmap items (Notion)
