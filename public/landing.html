@@ -1,0 +1,709 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ProformAI — AI Real Estate Underwriting in 90 Seconds</title>
+<meta name="description" content="Upload a rent roll, T-12, or offering memo. Get investor-ready pro formas, risk scores, and market comps in under 2 minutes. Built for sponsors who move fast.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+
+:root{
+  --bg:#09090b;
+  --bg-elevated:#111114;
+  --bg-card:#16161a;
+  --border:#222228;
+  --border-glow:rgba(99,255,218,0.12);
+  --text:#e4e4e7;
+  --text-muted:#71717a;
+  --text-dim:#52525b;
+  --accent:#63ffd9;
+  --accent-glow:rgba(99,255,218,0.15);
+  --accent-warm:#fbbf24;
+  --danger:#ef4444;
+  --serif:'Instrument Serif',Georgia,serif;
+  --sans:'DM Sans',system-ui,sans-serif;
+  --mono:'JetBrains Mono',monospace;
+}
+
+html{scroll-behavior:smooth;font-size:16px}
+body{background:var(--bg);color:var(--text);font-family:var(--sans);line-height:1.6;overflow-x:visible;-webkit-font-smoothing:antialiased}
+
+::selection{background:var(--accent);color:var(--bg)}
+
+/* Noise overlay */
+body::before{
+  content:'';position:fixed;inset:0;z-index:9999;pointer-events:none;opacity:0.025;
+  background-image:url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+/* Grid background */
+.grid-bg{
+  position:fixed;inset:0;z-index:0;pointer-events:none;
+  background-image:
+    linear-gradient(rgba(99,255,218,0.03) 1px,transparent 1px),
+    linear-gradient(90deg,rgba(99,255,218,0.03) 1px,transparent 1px);
+  background-size:60px 60px;
+}
+
+.container{max-width:1140px;margin:0 auto;padding:0 24px;position:relative;z-index:1}
+
+/* ---- NAV ---- */
+nav{
+  position:fixed;top:0;left:0;right:0;z-index:100;
+  background:rgba(9,9,11,0.8);backdrop-filter:blur(20px);
+  border-bottom:1px solid var(--border);
+}
+.nav-inner{
+  display:flex;align-items:center;justify-content:space-between;
+  max-width:1140px;margin:0 auto;padding:16px 24px;
+}
+.logo{font-family:var(--mono);font-weight:500;font-size:1rem;letter-spacing:-0.02em;color:var(--text)}
+.logo span{color:var(--accent)}
+.nav-links{display:flex;align-items:center;gap:32px}
+.nav-links a{color:var(--text-muted);text-decoration:none;font-size:0.875rem;font-weight:500;transition:color 0.2s}
+.nav-links a:hover{color:var(--text)}
+.btn-nav{
+  padding:8px 20px;border-radius:6px;font-size:0.875rem;font-weight:600;
+  background:var(--accent);color:var(--bg);text-decoration:none;
+  transition:all 0.2s;border:none;cursor:pointer;
+}
+.btn-nav:hover{box-shadow:0 0 20px var(--accent-glow);transform:translateY(-1px)}
+
+/* ---- HERO ---- */
+.hero{
+  min-height:100vh;display:flex;align-items:center;
+  padding:120px 0 80px;position:relative;
+}
+.hero-glow{
+  position:absolute;top:10%;left:50%;transform:translateX(-50%);
+  width:800px;height:600px;
+  background:radial-gradient(ellipse,rgba(99,255,218,0.06) 0%,transparent 70%);
+  pointer-events:none;
+}
+.hero-content{text-align:center;max-width:800px;margin:0 auto}
+
+.hero-badge{
+  display:inline-flex;align-items:center;gap:8px;
+  padding:6px 16px;border-radius:100px;
+  background:var(--bg-card);border:1px solid var(--border);
+  font-size:0.8rem;font-weight:500;color:var(--text-muted);
+  margin-bottom:32px;
+  animation:fadeUp 0.8s ease both;
+}
+.hero-badge .dot{width:6px;height:6px;border-radius:50%;background:var(--accent);animation:pulse 2s infinite}
+
+h1{
+  font-family:var(--serif);font-weight:400;
+  font-size:clamp(3rem,7vw,5rem);line-height:1.05;
+  letter-spacing:-0.03em;margin-bottom:24px;
+  animation:fadeUp 0.8s ease 0.1s both;
+}
+h1 em{font-style:italic;color:var(--accent)}
+
+.hero-sub{
+  font-size:1.2rem;color:var(--text-muted);max-width:580px;margin:0 auto 48px;
+  line-height:1.7;animation:fadeUp 0.8s ease 0.2s both;
+}
+
+.hero-cta{display:flex;gap:16px;justify-content:center;flex-wrap:wrap;animation:fadeUp 0.8s ease 0.3s both}
+
+.btn-primary{
+  padding:14px 32px;border-radius:8px;font-size:1rem;font-weight:600;
+  background:var(--accent);color:var(--bg);text-decoration:none;
+  transition:all 0.25s;border:none;cursor:pointer;
+  font-family:var(--sans);
+}
+.btn-primary:hover{box-shadow:0 0 30px var(--accent-glow),0 4px 20px rgba(0,0,0,0.3);transform:translateY(-2px)}
+
+.btn-secondary{
+  padding:14px 32px;border-radius:8px;font-size:1rem;font-weight:500;
+  background:transparent;color:var(--text);text-decoration:none;
+  border:1px solid var(--border);transition:all 0.25s;cursor:pointer;
+  font-family:var(--sans);
+}
+.btn-secondary:hover{border-color:var(--text-dim);background:var(--bg-elevated)}
+
+/* ---- METRICS BAR ---- */
+.metrics-bar{
+  display:grid;grid-template-columns:repeat(4,1fr);gap:1px;
+  background:var(--border);border:1px solid var(--border);border-radius:12px;
+  overflow:visible;margin-top:80px;
+  animation:fadeUp 0.8s ease 0.4s both;
+}
+.metric{background:var(--bg-card);padding:32px 24px;text-align:center}
+.metric-value{font-family:var(--mono);font-size:2rem;font-weight:500;color:var(--accent);margin-bottom:4px}
+.metric-label{font-size:0.8rem;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.08em}
+
+/* ---- DEMO SECTION ---- */
+.demo-section{padding:120px 0;position:relative}
+.section-label{
+  font-family:var(--mono);font-size:0.75rem;color:var(--accent);
+  text-transform:uppercase;letter-spacing:0.15em;margin-bottom:16px;
+}
+.section-title{
+  font-family:var(--serif);font-size:clamp(2rem,4vw,3.2rem);
+  font-weight:400;letter-spacing:-0.02em;margin-bottom:16px;line-height:1.1;
+}
+.section-desc{color:var(--text-muted);font-size:1.1rem;max-width:540px;margin-bottom:48px}
+
+.demo-window{
+  background:var(--bg-card);border:1px solid var(--border);border-radius:16px;
+  overflow:visible;position:relative;
+}
+.demo-titlebar{
+  display:flex;align-items:center;gap:8px;padding:16px 20px;
+  border-bottom:1px solid var(--border);
+}
+.demo-dot{width:12px;height:12px;border-radius:50%;background:#333}
+.demo-dot:first-child{background:#ff5f57}
+.demo-dot:nth-child(2){background:#ffbd2e}
+.demo-dot:nth-child(3){background:#28ca41}
+.demo-titlebar span{margin-left:auto;font-family:var(--mono);font-size:0.75rem;color:var(--text-dim)}
+
+.demo-body{padding:40px;display:grid;grid-template-columns:1fr 1fr;gap:40px;min-height:420px}
+
+.demo-upload{
+  display:flex;flex-direction:column;align-items:center;justify-content:center;
+  border:2px dashed var(--border);border-radius:12px;padding:40px;
+  text-align:center;transition:all 0.3s;cursor:pointer;
+}
+.demo-upload:hover{border-color:var(--accent);background:rgba(99,255,218,0.02)}
+.upload-icon{font-size:3rem;margin-bottom:16px;opacity:0.5}
+.upload-title{font-weight:600;margin-bottom:4px}
+.upload-sub{font-size:0.85rem;color:var(--text-dim)}
+
+.demo-output{display:flex;flex-direction:column;gap:16px}
+.output-card{
+  background:var(--bg-elevated);border:1px solid var(--border);border-radius:10px;
+  padding:16px 20px;transition:all 0.3s;
+}
+.output-card:hover{border-color:rgba(99,255,218,0.2)}
+.output-label{font-size:0.7rem;text-transform:uppercase;letter-spacing:0.1em;color:var(--text-dim);margin-bottom:8px}
+.output-row{display:flex;justify-content:space-between;align-items:center;margin-bottom:4px}
+.output-key{font-size:0.9rem;color:var(--text-muted)}
+.output-val{font-family:var(--mono);font-size:0.9rem;color:var(--accent);font-weight:500}
+.output-val.warn{color:var(--accent-warm)}
+.output-val.danger{color:var(--danger)}
+
+.risk-badge{
+  display:inline-flex;padding:3px 10px;border-radius:100px;
+  font-family:var(--mono);font-size:0.75rem;font-weight:500;
+}
+.risk-low{background:rgba(99,255,218,0.1);color:var(--accent)}
+.risk-med{background:rgba(251,191,36,0.1);color:var(--accent-warm)}
+.risk-high{background:rgba(239,68,68,0.1);color:var(--danger)}
+
+/* ---- FEATURES ---- */
+.features-section{padding:120px 0}
+.features-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:var(--border);border:1px solid var(--border);border-radius:16px;overflow:visible}
+.feature-card{background:var(--bg-card);padding:40px 32px;transition:background 0.3s}
+.feature-card:hover{background:var(--bg-elevated)}
+.feature-icon{font-size:1.8rem;margin-bottom:20px;display:block}
+.feature-title{font-family:var(--serif);font-size:1.3rem;margin-bottom:10px}
+.feature-desc{font-size:0.9rem;color:var(--text-muted);line-height:1.6}
+
+/* ---- HOW IT WORKS ---- */
+.how-section{padding:120px 0}
+.steps{display:grid;grid-template-columns:repeat(3,1fr);gap:48px;margin-top:64px}
+.step{position:relative}
+.step-num{
+  font-family:var(--mono);font-size:4rem;font-weight:700;
+  color:var(--bg-elevated);
+  -webkit-text-stroke:1px var(--border);
+  margin-bottom:16px;line-height:1;
+}
+.step-title{font-family:var(--serif);font-size:1.4rem;margin-bottom:8px}
+.step-desc{font-size:0.9rem;color:var(--text-muted);line-height:1.6}
+.step-time{
+  font-family:var(--mono);font-size:0.75rem;color:var(--accent);
+  margin-top:12px;padding:4px 12px;border-radius:100px;
+  background:rgba(99,255,218,0.06);border:1px solid rgba(99,255,218,0.1);
+  display:inline-block;
+}
+
+/* ---- COMPARISON ---- */
+.comparison-section{padding:120px 0}
+.comparison-table{
+  background:var(--bg-card);border:1px solid var(--border);border-radius:16px;
+  overflow:visible;margin-top:48px;
+}
+.comp-header{
+  display:grid;grid-template-columns:2fr 1fr 1fr;gap:0;
+  border-bottom:1px solid var(--border);
+}
+.comp-header div{padding:20px 24px;font-weight:600;font-size:0.85rem;text-transform:uppercase;letter-spacing:0.05em;color:var(--text-dim)}
+.comp-header div:last-child{color:var(--accent);background:rgba(99,255,218,0.03)}
+.comp-row{
+  display:grid;grid-template-columns:2fr 1fr 1fr;gap:0;
+  border-bottom:1px solid var(--border);
+}
+.comp-row:last-child{border:none}
+.comp-row div{padding:16px 24px;font-size:0.9rem;display:flex;align-items:center;gap:8px}
+.comp-row div:first-child{color:var(--text-muted)}
+.comp-row div:last-child{background:rgba(99,255,218,0.01)}
+.comp-check{color:var(--accent)}
+.comp-x{color:var(--text-dim);opacity:0.4}
+
+/* ---- PRICING ---- */
+.pricing-section{padding:120px 0}
+.pricing-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:24px;margin-top:48px}
+.price-card{
+  background:var(--bg-card);border:1px solid var(--border);border-radius:16px;
+  padding:40px 32px;transition:all 0.3s;position:relative;
+}
+.price-card.featured{border-color:var(--accent);box-shadow:0 0 40px rgba(99,255,218,0.06)}
+.price-card.featured::before{
+  content:'Most Popular';position:absolute;top:-12px;left:50%;transform:translateX(-50%);
+  background:var(--accent);color:var(--bg);padding:4px 16px;border-radius:100px;
+  font-size:0.7rem;font-weight:700;text-transform:uppercase;letter-spacing:0.05em;
+}
+.price-name{font-family:var(--mono);font-size:0.8rem;text-transform:uppercase;letter-spacing:0.1em;color:var(--text-dim);margin-bottom:8px}
+.price-amount{font-family:var(--serif);font-size:3rem;margin-bottom:4px}
+.price-amount span{font-size:1rem;color:var(--text-dim);font-family:var(--sans)}
+.price-credits{font-size:0.85rem;color:var(--text-muted);margin-bottom:24px}
+.price-features{list-style:none;margin-bottom:32px}
+.price-features li{
+  padding:8px 0;font-size:0.9rem;color:var(--text-muted);
+  border-bottom:1px solid rgba(255,255,255,0.03);
+  display:flex;align-items:center;gap:10px;
+}
+.price-features li::before{content:'→';color:var(--accent);font-family:var(--mono);font-size:0.8rem}
+.btn-price{
+  display:block;width:100%;padding:14px;text-align:center;border-radius:8px;
+  font-weight:600;font-size:0.95rem;cursor:pointer;transition:all 0.25s;
+  text-decoration:none;font-family:var(--sans);
+}
+.btn-price-primary{background:var(--accent);color:var(--bg);border:none}
+.btn-price-primary:hover{box-shadow:0 0 24px var(--accent-glow)}
+.btn-price-secondary{background:transparent;color:var(--text);border:1px solid var(--border)}
+.btn-price-secondary:hover{border-color:var(--text-dim)}
+
+/* ---- CTA / WAITLIST ---- */
+.cta-section{padding:120px 0;text-align:center}
+.cta-box{
+  background:var(--bg-card);border:1px solid var(--border);border-radius:20px;
+  padding:80px 60px;position:relative;overflow:visible;
+}
+.cta-box::before{
+  content:'';position:absolute;top:-100px;left:50%;transform:translateX(-50%);
+  width:600px;height:400px;
+  background:radial-gradient(ellipse,rgba(99,255,218,0.08) 0%,transparent 70%);
+  pointer-events:none;
+}
+.cta-title{font-family:var(--serif);font-size:clamp(2rem,4vw,3rem);margin-bottom:16px;position:relative}
+.cta-sub{color:var(--text-muted);font-size:1.1rem;max-width:480px;margin:0 auto 40px;position:relative}
+
+.waitlist-form{
+  display:flex;gap:12px;max-width:460px;margin:0 auto;position:relative;
+}
+.waitlist-form input{
+  flex:1;padding:14px 20px;border-radius:8px;border:1px solid var(--border);
+  background:var(--bg);color:var(--text);font-size:1rem;font-family:var(--sans);
+  outline:none;transition:border-color 0.2s;
+}
+.waitlist-form input:focus{border-color:var(--accent)}
+.waitlist-form input::placeholder{color:var(--text-dim)}
+.waitlist-form button{
+  padding:14px 28px;border-radius:8px;border:none;
+  background:var(--accent);color:var(--bg);font-weight:600;
+  font-size:1rem;cursor:pointer;transition:all 0.25s;
+  font-family:var(--sans);white-space:nowrap;
+}
+.waitlist-form button:hover{box-shadow:0 0 24px var(--accent-glow)}
+
+.cta-note{font-size:0.8rem;color:var(--text-dim);margin-top:16px;position:relative}
+
+/* ---- FOOTER ---- */
+footer{
+  border-top:1px solid var(--border);padding:48px 0;
+  display:flex;justify-content:space-between;align-items:center;
+}
+footer .logo{font-size:0.9rem}
+footer .links{display:flex;gap:24px}
+footer .links a{color:var(--text-dim);text-decoration:none;font-size:0.8rem;transition:color 0.2s}
+footer .links a:hover{color:var(--text)}
+
+/* ---- ANIMATIONS ---- */
+@keyframes fadeUp{
+  from{opacity:0;transform:translateY(20px)}
+  to{opacity:1;transform:translateY(0)}
+}
+@keyframes pulse{
+  0%,100%{opacity:1}
+  50%{opacity:0.4}
+}
+
+.reveal{opacity:1;transform:translateY(0);transition:all 0.8s cubic-bezier(0.16,1,0.3,1)}
+.reveal.visible{opacity:1;transform:translateY(0)}
+
+/* ---- RESPONSIVE ---- */
+@media(max-width:900px){
+  .metrics-bar{grid-template-columns:repeat(2,1fr)}
+  .demo-body{grid-template-columns:1fr}
+  .features-grid{grid-template-columns:1fr}
+  .steps{grid-template-columns:1fr;gap:32px}
+  .pricing-grid{grid-template-columns:1fr;max-width:400px;margin-left:auto;margin-right:auto}
+  .comp-header,.comp-row{grid-template-columns:1.5fr 1fr 1fr}
+  footer{flex-direction:column;gap:24px;text-align:center}
+}
+@media(max-width:600px){
+  .nav-links a:not(.btn-nav){display:none}
+  .hero-cta{flex-direction:column;align-items:center}
+  .waitlist-form{flex-direction:column}
+  .cta-box{padding:48px 24px}
+  .metrics-bar{grid-template-columns:1fr}
+}
+</style>
+</head>
+<body>
+<div class="grid-bg"></div>
+
+<!-- NAV -->
+<nav>
+  <div class="nav-inner">
+    <div class="logo">proform<span>AI</span></div>
+    <div class="nav-links">
+      <a href="#features">Features</a>
+      <a href="#how">How It Works</a>
+      <a href="#pricing">Pricing</a>
+      <a href="#waitlist" class="btn-nav">Join Waitlist</a>
+    </div>
+  </div>
+</nav>
+
+<!-- HERO -->
+<section class="hero">
+  <div class="hero-glow"></div>
+  <div class="container">
+    <div class="hero-content">
+      <div class="hero-badge">
+        <span class="dot"></span>
+        Now in early access
+      </div>
+      <h1>Underwrite deals<br>in <em>90 seconds,</em><br>not 90 minutes</h1>
+      <p class="hero-sub">Upload a rent roll, T-12, or offering memo. Get investor-ready pro formas, risk scores, and due diligence — powered by AI built for real estate sponsors.</p>
+      <div class="hero-cta">
+        <a href="#waitlist" class="btn-primary">Get Early Access →</a>
+        <a href="#demo" class="btn-secondary">See It Work</a>
+      </div>
+    </div>
+
+    <div class="metrics-bar">
+      <div class="metric">
+        <div class="metric-value">90s</div>
+        <div class="metric-label">Average Analysis Time</div>
+      </div>
+      <div class="metric">
+        <div class="metric-value">95%+</div>
+        <div class="metric-label">Extraction Accuracy</div>
+      </div>
+      <div class="metric">
+        <div class="metric-value">100+</div>
+        <div class="metric-label">Audit Checks</div>
+      </div>
+      <div class="metric">
+        <div class="metric-value">$0</div>
+        <div class="metric-label">To Start (5 Free Credits)</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- DEMO -->
+<section class="demo-section reveal" id="demo">
+  <div class="container">
+    <div class="section-label">Live Preview</div>
+    <div class="section-title">From document to decision</div>
+    <p class="section-desc">Drop in your financials. Watch the AI extract, model, and score — while you grab coffee.</p>
+
+    <div class="demo-window">
+      <div class="demo-titlebar">
+        <div class="demo-dot"></div>
+        <div class="demo-dot"></div>
+        <div class="demo-dot"></div>
+        <span>proformai.app</span>
+      </div>
+      <div class="demo-body">
+        <div class="demo-upload">
+          <div class="upload-icon">📄</div>
+          <div class="upload-title">Drop your documents here</div>
+          <div class="upload-sub">Rent Roll • T-12 • Offering Memo • PDF or Excel</div>
+        </div>
+        <div class="demo-output">
+          <div class="output-card">
+            <div class="output-label">Key Metrics</div>
+            <div class="output-row"><span class="output-key">Cap Rate (In-Place)</span><span class="output-val">6.2%</span></div>
+            <div class="output-row"><span class="output-key">Cash-on-Cash</span><span class="output-val">8.7%</span></div>
+            <div class="output-row"><span class="output-key">5-Year IRR</span><span class="output-val">18.4%</span></div>
+            <div class="output-row"><span class="output-key">DSCR</span><span class="output-val warn">1.18x</span></div>
+          </div>
+          <div class="output-card">
+            <div class="output-label">Risk Assessment</div>
+            <div class="output-row"><span class="output-key">Overall Score</span><span class="risk-badge risk-low">Low Risk — 82/100</span></div>
+            <div class="output-row"><span class="output-key">Occupancy Risk</span><span class="risk-badge risk-med">Medium</span></div>
+          </div>
+          <div class="output-card">
+            <div class="output-label">Red Flags</div>
+            <div class="output-row"><span class="output-key">⚠️ DSCR below 1.25x threshold</span><span class="output-val danger">Action</span></div>
+            <div class="output-row"><span class="output-key">⚠️ 3 units below market rent</span><span class="output-val warn">Review</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- FEATURES -->
+<section class="features-section reveal" id="features">
+  <div class="container">
+    <div class="section-label">Capabilities</div>
+    <div class="section-title" style="margin-bottom:48px">Everything between upload and LOI</div>
+
+    <div class="features-grid">
+      <div class="feature-card">
+        <span class="feature-icon">⚡</span>
+        <div class="feature-title">Instant Data Extraction</div>
+        <div class="feature-desc">Upload rent rolls, T-12s, or OMs. AI extracts units, rents, expenses, P&L, and occupancy in seconds — with 100+ audit cross-checks.</div>
+      </div>
+      <div class="feature-card">
+        <span class="feature-icon">📊</span>
+        <div class="feature-title">DCF & Pro Forma Engine</div>
+        <div class="feature-desc">5-year cash flow projections, IRR, cash-on-cash, equity multiples. Sensitivity sliders for vacancy, rent growth, and expenses — updated in real time.</div>
+      </div>
+      <div class="feature-card">
+        <span class="feature-icon">🎯</span>
+        <div class="feature-title">Risk Scoring</div>
+        <div class="feature-desc">AI-generated risk scores based on DSCR, LTV, and debt yield. Anomaly detection flags missing data and inconsistent expenses before they cost you.</div>
+      </div>
+      <div class="feature-card">
+        <span class="feature-icon">🏘️</span>
+        <div class="feature-title">Market Comps & Cap Rates</div>
+        <div class="feature-desc">Real-time rent and sale comparables from national databases. Auto-fetch by location, unit mix, and property type. Exit cap prediction built in.</div>
+      </div>
+      <div class="feature-card">
+        <span class="feature-icon">💬</span>
+        <div class="feature-title">Ask Anything</div>
+        <div class="feature-desc">"What if occupancy drops to 90%?" — conversational Q&A with your deal data. Adjust assumptions and see returns update instantly.</div>
+      </div>
+      <div class="feature-card">
+        <span class="feature-icon">📑</span>
+        <div class="feature-title">One-Click Outputs</div>
+        <div class="feature-desc">Investor-ready PDF reports, white-label branding, LOI generation, and Excel exports with formulas intact. Ready to send to LPs in minutes.</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- HOW IT WORKS -->
+<section class="how-section reveal" id="how">
+  <div class="container">
+    <div class="section-label">Workflow</div>
+    <div class="section-title">Three steps. Under two minutes.</div>
+
+    <div class="steps">
+      <div class="step">
+        <div class="step-num">01</div>
+        <div class="step-title">Upload Documents</div>
+        <div class="step-desc">Drop your rent roll, T-12, offering memo, or property photos. PDF, Excel, images — we handle it all.</div>
+        <div class="step-time">~5 seconds</div>
+      </div>
+      <div class="step">
+        <div class="step-num">02</div>
+        <div class="step-title">AI Analyzes & Models</div>
+        <div class="step-desc">Data extraction, financial modeling, risk scoring, market comps, and audit validation happen simultaneously.</div>
+        <div class="step-time">~60 seconds</div>
+      </div>
+      <div class="step">
+        <div class="step-num">03</div>
+        <div class="step-title">Export & Decide</div>
+        <div class="step-desc">Download investor-ready PDFs, generate LOIs, or dive deeper with follow-up questions and scenario modeling.</div>
+        <div class="step-time">~30 seconds</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- COMPARISON -->
+<section class="comparison-section reveal">
+  <div class="container">
+    <div class="section-label">Why Switch</div>
+    <div class="section-title">Manual spreadsheets are costing you deals</div>
+    <p class="section-desc">Every hour spent on Excel is an hour your competition spends winning.</p>
+
+    <div class="comparison-table">
+      <div class="comp-header">
+        <div>Capability</div>
+        <div>Spreadsheets</div>
+        <div>ProformAI</div>
+      </div>
+      <div class="comp-row">
+        <div>Time to first pro forma</div>
+        <div><span class="comp-x">✕</span> 2-4 hours</div>
+        <div><span class="comp-check">✓</span> Under 2 minutes</div>
+      </div>
+      <div class="comp-row">
+        <div>Data extraction from documents</div>
+        <div><span class="comp-x">✕</span> Manual entry</div>
+        <div><span class="comp-check">✓</span> AI-powered, instant</div>
+      </div>
+      <div class="comp-row">
+        <div>Market rent & sale comps</div>
+        <div><span class="comp-x">✕</span> Separate subscriptions</div>
+        <div><span class="comp-check">✓</span> Built in, real-time</div>
+      </div>
+      <div class="comp-row">
+        <div>Risk scoring & anomaly detection</div>
+        <div><span class="comp-x">✕</span> Not available</div>
+        <div><span class="comp-check">✓</span> 100+ automated checks</div>
+      </div>
+      <div class="comp-row">
+        <div>Scenario modeling</div>
+        <div><span class="comp-x">✕</span> Rebuild each time</div>
+        <div><span class="comp-check">✓</span> Live sliders</div>
+      </div>
+      <div class="comp-row">
+        <div>Investor-ready reports</div>
+        <div><span class="comp-x">✕</span> Format manually</div>
+        <div><span class="comp-check">✓</span> One-click PDF/LOI</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- PRICING -->
+<section class="pricing-section reveal" id="pricing">
+  <div class="container">
+    <div class="section-label">Pricing</div>
+    <div class="section-title">Pay per deal. Scale as you grow.</div>
+    <p class="section-desc">1 credit = 1 property address. Run unlimited scenarios on each. Unused credits roll over for 3 months.</p>
+
+    <div class="pricing-grid">
+      <div class="price-card">
+        <div class="price-name">Starter</div>
+        <div class="price-amount">$30<span>/mo</span></div>
+        <div class="price-credits">50 credits · ~$0.60/deal</div>
+        <ul class="price-features">
+          <li>Upload & parse any document</li>
+          <li>Full pro forma output</li>
+          <li>Risk scoring</li>
+          <li>Standard PDF export</li>
+          <li>Email support</li>
+        </ul>
+        <a href="#waitlist" class="btn-price btn-price-secondary">Get Started</a>
+      </div>
+      <div class="price-card featured">
+        <div class="price-name">Pro</div>
+        <div class="price-amount">$100<span>/mo</span></div>
+        <div class="price-credits">250 credits · ~$0.40/deal</div>
+        <ul class="price-features">
+          <li>Everything in Starter</li>
+          <li>Market comps & cap rates</li>
+          <li>Sensitivity analysis</li>
+          <li>White-label reports</li>
+          <li>LOI generator</li>
+          <li>Priority support</li>
+        </ul>
+        <a href="#waitlist" class="btn-price btn-price-primary">Get Started</a>
+      </div>
+      <div class="price-card">
+        <div class="price-name">Enterprise</div>
+        <div class="price-amount">$300<span>/mo</span></div>
+        <div class="price-credits">1,000 credits · ~$0.30/deal</div>
+        <ul class="price-features">
+          <li>Everything in Pro</li>
+          <li>Multi-user & team roles</li>
+          <li>API access</li>
+          <li>Pipeline dashboard</li>
+          <li>Dedicated analyst support</li>
+        </ul>
+        <a href="#waitlist" class="btn-price btn-price-secondary">Contact Us</a>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- CTA / WAITLIST -->
+<section class="cta-section reveal" id="waitlist">
+  <div class="container">
+    <div class="cta-box">
+      <div class="section-label">Early Access</div>
+      <h2 class="cta-title">Stop losing deals to spreadsheets</h2>
+      <p class="cta-sub">Join the waitlist and get 5 free credits to underwrite your first deals. No card required.</p>
+      <form class="waitlist-form" onsubmit="handleSubmit(event)">
+        <input type="email" placeholder="you@yourfirm.com" required id="emailInput">
+        <button type="submit" id="submitBtn">Join Waitlist →</button>
+      </form>
+      <p class="cta-note" id="formNote">We'll notify you when your spot opens up. No spam, ever.</p>
+    </div>
+  </div>
+</section>
+
+<!-- FOOTER -->
+<div class="container">
+  <footer>
+    <div class="logo">proform<span>AI</span></div>
+    <div class="links">
+      <a href="#features">Features</a>
+      <a href="#pricing">Pricing</a>
+      <a href="mailto:hello@proformai.app">Contact</a>
+    </div>
+  </footer>
+</div>
+
+<script>
+// Scroll reveal
+const observer = new IntersectionObserver((entries) => {
+  entries.forEach(e => { if(e.isIntersecting) e.target.classList.add('visible') });
+}, { threshold: 0.1 });
+document.querySelectorAll('.reveal').forEach(el => observer.observe(el));
+
+// Waitlist form
+async function handleSubmit(e) {
+  e.preventDefault();
+  const email = document.getElementById('emailInput').value.trim();
+  const btn = document.getElementById('submitBtn');
+  const note = document.getElementById('formNote');
+  const originalText = btn.textContent;
+  btn.textContent = 'Joining...';
+  btn.disabled = true;
+  btn.style.opacity = '0.7';
+  try {
+    const res = await fetch('/api/waitlist', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email }),
+    });
+    const data = await res.json();
+    if (data.success) {
+      btn.textContent = 'Added ✓';
+      btn.style.background = '#16a34a';
+      btn.style.opacity = '1';
+      note.textContent = data.message === 'already_subscribed'
+        ? "You're already on the list! We'll be in touch soon."
+        : email + ' is on the list. We will be in touch soon.';
+      note.style.color = 'var(--accent)';
+      document.getElementById('emailInput').value = '';
+    } else { throw new Error(data.error); }
+  } catch (err) {
+    btn.textContent = originalText;
+    btn.style.opacity = '1';
+    btn.disabled = false;
+    note.textContent = 'Something went wrong. Please try again.';
+    note.style.color = '#ef4444';
+  }
+}
+
+// Smooth nav
+document.querySelectorAll('a[href^="#"]').forEach(a => {
+  a.addEventListener('click', e => {
+    e.preventDefault();
+    const target = document.querySelector(a.getAttribute('href'));
+    if (target) target.scrollIntoView({ behavior: 'smooth' });
+  });
+});
+</script>
+</body>
+</html>
