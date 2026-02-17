@@ -1,4 +1,10 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
-  <rect width="64" height="64" rx="12" fill="#09090b"/>
-  <path d="M16 44V20h14c8 0 13 4 13 11s-5 13-13 13H16zm8-7h6c3.4 0 5.6-2.2 5.6-6s-2.2-5-5.6-5h-6v11z" fill="#63ffd9"/>
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#7c6ef0"/>
+      <stop offset="100%" style="stop-color:#a78bfa"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="96" fill="url(#bg)"/>
+  <text x="256" y="380" font-family="system-ui, -apple-system, sans-serif" font-size="360" font-weight="800" fill="#ffffff" text-anchor="middle">P</text>
 </svg>
