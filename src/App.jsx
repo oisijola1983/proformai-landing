@@ -145,10 +145,23 @@ function BillingPage() {
   );
 }
 
+const emailOnlyAppearance = {
+  elements: {
+    socialButtonsBlockButton: { display: "none" },
+    dividerRow: { display: "none" },
+  },
+};
+
 function SignInPage() {
   return (
     <div style={{ minHeight: "100vh", background: "#0A0F1C", display: "grid", placeItems: "center", padding: 16 }}>
-      <SignIn routing="path" path="/app/sign-in" signUpUrl="/app/sign-up" fallbackRedirectUrl="/app" />
+      <SignIn
+        routing="path"
+        path="/app/sign-in"
+        signUpUrl="/app/sign-up"
+        fallbackRedirectUrl="/app"
+        appearance={emailOnlyAppearance}
+      />
     </div>
   );
 }
@@ -156,7 +169,7 @@ function SignInPage() {
 function SignUpPage() {
   return (
     <div style={{ minHeight: "100vh", background: "#0A0F1C", display: "grid", placeItems: "center", padding: 16 }}>
-      <SignUp routing="path" path="/app/sign-up" forceRedirectUrl="/app" />
+      <SignUp routing="path" path="/app/sign-up" forceRedirectUrl="/app" appearance={emailOnlyAppearance} />
     </div>
   );
 }
