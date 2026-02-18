@@ -197,6 +197,16 @@ function AppRoutes() {
           </ProtectedRoute>
         }
       />
+      <Route
+        path="/app/dashboard"
+        element={
+          <ProtectedRoute>
+            <AppFrame>
+              <UnderwritingApp />
+            </AppFrame>
+          </ProtectedRoute>
+        }
+      />
       <Route path="*" element={<Navigate to="/app" replace />} />
     </Routes>
   );

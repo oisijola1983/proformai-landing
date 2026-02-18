@@ -8,7 +8,7 @@ const MKTS = ["Houston, TX","Dallas, TX","San Antonio, TX","Austin, TX","Atlanta
 const B = {bg:"#0A0F1C",s:"#111827",bd:"#1e293b",bd2:"#334155",a:"#3b82f6",as:"rgba(59,130,246,0.08)",r:"#ef4444",rs:"rgba(239,68,68,0.08)",w:"#f59e0b",ws:"rgba(245,158,11,0.08)",g:"#10b981",gs:"rgba(16,185,129,0.08)",t:"#f1f5f9",tm:"#94a3b8",td:"#64748b"};
 
 async function toB64(f){return new Promise((r,j)=>{const rd=new FileReader();rd.onload=()=>r(rd.result.split(",")[1]);rd.onerror=j;rd.readAsDataURL(f)})}
-function gMT(f){const e=f.name.split(".").pop().toLowerCase();return{pdf:"application/pdf",png:"image/png",jpg:"image/jpeg",jpeg:"image/jpeg",gif:"image/gif",webp:"image/webp"}[e]||f.type}
+function gMT(f){const e=f.name.split(".").pop().toLowerCase();return{pdf:"application/pdf",png:"image/png",jpg:"image/jpeg",jpeg:"image/jpeg",gif:"image/gif",webp:"image/webp",csv:"text/csv",xls:"application/vnd.ms-excel",xlsx:"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"}[e]||f.type}
 
 function parseJSON(raw) {
   if (!raw) return null;
@@ -64,10 +64,10 @@ function TextArea({ value, onChange, placeholder, rows = 3, highlight }) {
 }
 
 /* ═══ UPLOAD STEP ═══ */
-function UploadStep({ files, setFiles, extracting, exResult, onExtract, exFields }) {
+function UploadStep({ files, setFiles, extracting, extractProgress, exResult, onExtract, exFields }) {
   const ref = useRef(null);
   const [dg, setDg] = useState(false);
-  const add = fl => setFiles(p => [...p, ...Array.from(fl).filter(f => { const m = gMT(f); return m === "application/pdf" || m?.startsWith("image/"); })]);
+  const add = fl => setFiles(p => [...p, ...Array.from(fl).filter(f => { const m = gMT(f); return m === "application/pdf" || m?.startsWith("image/") || m === "text/csv" || m === "application/vnd.ms-excel" || m === "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"; })]);
 
   return (
     <div>
@@ -76,12 +76,12 @@ function UploadStep({ files, setFiles, extracting, exResult, onExtract, exFields
 
       <div onClick={() => ref.current?.click()} onDragOver={e => { e.preventDefault(); setDg(true); }} onDragLeave={() => setDg(false)} onDrop={e => { e.preventDefault(); setDg(false); add(e.dataTransfer.files); }}
         style={{ borderRadius: 12, padding: 40, textAlign: "center", cursor: "pointer", marginBottom: 24, border: `2px dashed ${dg ? B.a : B.bd2}`, background: dg ? B.as : "transparent" }}>
-        <input ref={ref} type="file" multiple accept=".pdf,.png,.jpg,.jpeg,.gif,.webp" style={{ display: "none" }} onChange={e => add(e.target.files)} />
+        <input ref={ref} type="file" multiple accept=".pdf,.png,.jpg,.jpeg,.gif,.webp,.csv,.xls,.xlsx" style={{ display: "none" }} onChange={e => add(e.target.files)} />
         <div style={{ width: 56, height: 56, borderRadius: 16, background: B.as, display: "inline-flex", alignItems: "center", justifyContent: "center", marginBottom: 16 }}>
           <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke={B.a} strokeWidth="1.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="17 8 12 3 7 8" /><line x1="12" y1="3" x2="12" y2="15" /></svg>
         </div>
         <p style={{ fontSize: 13, fontWeight: 500, color: B.t, marginBottom: 4 }}>{dg ? "Drop here" : "Drop files or click to browse"}</p>
-        <p style={{ fontSize: 11, color: B.td }}>PDF, JPG, PNG — up to 20MB</p>
+        <p style={{ fontSize: 11, color: B.td }}>PDF, JPG, PNG, CSV, XLSX — up to 20MB</p>
       </div>
 
       {files.length > 0 && (
@@ -92,7 +92,7 @@ function UploadStep({ files, setFiles, extracting, exResult, onExtract, exFields
           </div>
           {files.map((f, i) => (
             <div key={i} style={{ display: "flex", alignItems: "center", gap: 12, borderRadius: 8, padding: 12, marginBottom: 8, background: B.bg, border: `1px solid ${B.bd}` }}>
-              <span style={{ fontSize: 18 }}>{gMT(f) === "application/pdf" ? "📄" : "🖼️"}</span>
+              <span style={{ fontSize: 18 }}>{gMT(f) === "application/pdf" ? "📄" : (gMT(f).includes("excel") || gMT(f) === "text/csv") ? "📊" : "🖼️"}</span>
               <div style={{ flex: 1, minWidth: 0 }}>
                 <p style={{ fontSize: 13, fontWeight: 500, color: B.t, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{f.name}</p>
               </div>
@@ -112,6 +112,10 @@ function UploadStep({ files, setFiles, extracting, exResult, onExtract, exFields
         <div style={{ textAlign: "center", padding: "32px 0" }}>
           <div style={{ width: 48, height: 48, borderRadius: "50%", border: `2px solid transparent`, borderTopColor: B.a, borderRightColor: B.a, animation: "spin 1s linear infinite", margin: "0 auto 16px" }} />
           <p style={{ fontSize: 13, fontWeight: 500, color: B.t }}>Reading documents...</p>
+          <div style={{ margin: "12px auto 0", maxWidth: 280, height: 8, borderRadius: 999, background: B.bd }}>
+            <div style={{ width: `${extractProgress}%`, height: 8, borderRadius: 999, background: B.a, transition: "width .25s ease" }} />
+          </div>
+          <p style={{ fontSize: 11, marginTop: 6, color: B.td }}>{extractProgress}%</p>
         </div>
       )}
 
@@ -458,6 +462,7 @@ export default function App() {
   const [step, setStep] = useState(0);
   const [files, setFiles] = useState([]);
   const [extracting, setExtracting] = useState(false);
+  const [extractProgress, setExtractProgress] = useState(0);
   const [exResult, setExResult] = useState(null);
   const [exFields, setExFields] = useState({});
   const [docCtx, setDocCtx] = useState("");
@@ -489,16 +494,66 @@ export default function App() {
 
   async function handleExtract() {
     setExtracting(true);
+    setExtractProgress(5);
     try {
-      const parts = [];
-      for (const f of files) { const b = await toB64(f); const m = gMT(f); if (m === "application/pdf") parts.push({ type: "document", source: { type: "base64", media_type: m, data: b } }); else if (m?.startsWith("image/")) parts.push({ type: "image", source: { type: "base64", media_type: m, data: b } }); }
-      parts.push({ type: "text", text: `Extract all real estate data. Return ONLY JSON, no backticks: {"name","propertyType"(Multifamily|Single Family Portfolio|Mixed-Use|Land/Development|Office|Retail|Industrial|Self-Storage|Mobile Home Park|Hotel),"market"(City, State),"address","units"(number),"yearBuilt"(number),"lotSize"(acres),"sqft"(number),"description"(2-3 sentences),"askingPrice"(number),"pricePerUnit"(number),"pricePerSF"(number),"grossIncome"(annual),"otherIncome"(annual),"occupancy"(% number),"marketRent"(per unit/month),"opex"(annual),"taxes"(annual),"insurance"(annual),"capex"(number),"submarket","comps","knownRisks","summary"}. null if not found.` });
-      const resp = await fetch("/api/claude", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ model: "claude-sonnet-4-20250514", max_tokens: 3000, messages: [{ role: "user", content: parts }] }) });
-      const res = await resp.json(); let p; try { p = JSON.parse((res.content?.map(c => c.text || "").join("") || "{}").replace(/```json\s?|```/g, "").trim()); } catch { p = {}; }
-      const ne = {}; const nd = { ...d }; Object.entries(p).forEach(([k, v]) => { if (v != null && v !== "" && k !== "summary" && k in nd) { if (k === "market") { const m = MKTS.find(x => x.toLowerCase().includes((v + "").toLowerCase().split(",")[0].trim())); if (m) { nd[k] = m; ne[k] = true; } } else { nd[k] = v; ne[k] = true; } } });
-      setD(nd); setExFields(ne); setDocCtx(p.summary || ""); setExResult({ summary: p.summary || "Data extracted." });
-    } catch (e) { setExResult({ summary: "Error: " + e.message }); }
-    setExtracting(false);
+      const token = await getToken();
+      const uploadFiles = [];
+      let progress = 10;
+
+      for (const f of files) {
+        const b = await toB64(f);
+        uploadFiles.push({ name: f.name, mimeType: gMT(f), data: b });
+        progress = Math.min(70, progress + Math.max(8, Math.floor(50 / Math.max(files.length, 1))));
+        setExtractProgress(progress);
+      }
+
+      setExtractProgress(78);
+      const resp = await fetch("/api/extract", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ files: uploadFiles }),
+      });
+
+      setExtractProgress(92);
+      const res = await resp.json();
+      if (!resp.ok) {
+        if (resp.status === 402) {
+          setCredits(Number(res.credits || 0));
+          setCreditError("No credits remaining. Buy a credit pack to continue.");
+          return;
+        }
+        throw new Error(res.error || "Extraction failed");
+      }
+
+      const p = res.extracted || {};
+      const ne = {};
+      const nd = { ...d };
+      Object.entries(p).forEach(([k, v]) => {
+        if (v != null && v !== "" && k !== "summary" && k in nd) {
+          if (k === "market") {
+            const m = MKTS.find(x => x.toLowerCase().includes((v + "").toLowerCase().split(",")[0].trim()));
+            if (m) { nd[k] = m; ne[k] = true; }
+          } else {
+            nd[k] = v;
+            ne[k] = true;
+          }
+        }
+      });
+      setD(nd);
+      setExFields(ne);
+      setDocCtx(p.summary || "");
+      setExResult({ summary: p.summary || "Data extracted." });
+      if (typeof res.creditsRemaining === "number") setCredits(res.creditsRemaining);
+      setExtractProgress(100);
+    } catch (e) {
+      setExResult({ summary: "Error: " + e.message });
+    } finally {
+      setTimeout(() => setExtractProgress(0), 400);
+      setExtracting(false);
+    }
   }
 
   async function runAnalysis() {
@@ -583,7 +638,7 @@ export default function App() {
 
         {/* Content */}
         <div style={{ background: B.s, border: `1px solid ${B.bd}`, borderRadius: 16, padding: 24 }}>
-          {step === 0 && <UploadStep files={files} setFiles={setFiles} extracting={extracting} exResult={exResult} onExtract={handleExtract} exFields={exFields} />}
+          {step === 0 && <UploadStep files={files} setFiles={setFiles} extracting={extracting} extractProgress={extractProgress} exResult={exResult} onExtract={handleExtract} exFields={exFields} />}
           {step === 1 && <PropertyStep d={d} set={setD} ex={exFields} />}
           {step === 2 && <FinStep d={d} set={setD} ex={exFields} />}
           {step === 3 && <MktStep d={d} set={setD} ex={exFields} />}
