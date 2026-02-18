@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useMemo } from "react";
 import { useAuth } from "@clerk/clerk-react";
 
 const STEPS = ["Upload", "Property", "Financials", "Market", "Analysis"];
@@ -19,6 +19,114 @@ function parseJSON(raw) {
   const i = clean.indexOf("{"); const j = clean.lastIndexOf("}");
   if (i >= 0 && j > i) { try { const p = JSON.parse(clean.substring(i, j + 1)); if (p.verdict) return p; } catch {} }
   return { verdict: str.substring(0, 600), scores: {}, metrics: [], missingData: [], redFlags: [], questions: [], ddChecklist: [] };
+}
+
+function num(v, d = 0) {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : d;
+}
+
+function pmt(rate, nper, pv) {
+  if (!rate) return pv / nper;
+  return (rate * pv) / (1 - Math.pow(1 + rate, -nper));
+}
+
+function irr(cashflows, guess = 0.15) {
+  let rate = guess;
+  for (let i = 0; i < 80; i++) {
+    let npv = 0;
+    let dnpv = 0;
+    for (let t = 0; t < cashflows.length; t++) {
+      npv += cashflows[t] / Math.pow(1 + rate, t);
+      if (t > 0) dnpv += (-t * cashflows[t]) / Math.pow(1 + rate, t + 1);
+    }
+    if (Math.abs(npv) < 1e-7) break;
+    const next = rate - npv / (dnpv || 1e-9);
+    if (!Number.isFinite(next)) break;
+    rate = Math.max(-0.99, next);
+  }
+  return rate;
+}
+
+function buildDCF(input) {
+  const purchasePrice = num(input.askingPrice || input.offerPrice, 0);
+  const grossIncome = num(input.grossIncome, 0);
+  const otherIncome = num(input.otherIncome, 0);
+  const vacancyRate = num(input.occupancy) > 0 ? (100 - num(input.occupancy)) / 100 : 0.06;
+  const opex = num(input.opex, 0) || (grossIncome + otherIncome) * 0.42;
+  const ltv = num(input.ltv, 70) / 100;
+  const interestRate = num(input.interestRate, 7.25) / 100;
+  const amortYears = num(input.amortizationYears, 30);
+  const holdYears = Math.max(1, Math.min(10, num(input.holdPeriod, 5)));
+  const rentGrowth = num(input.rentGrowth, 3) / 100;
+  const expenseGrowth = num(input.expenseGrowth, 2.5) / 100;
+  const exitCap = num(input.exitCapRate, Math.max(4.5, num(input.targetCapRate, 6.25))) / 100;
+
+  if (!purchasePrice || !grossIncome) return null;
+
+  const loanAmount = purchasePrice * ltv;
+  const equity = purchasePrice - loanAmount;
+  const monthlyRate = interestRate / 12;
+  const nper = amortYears * 12;
+  const annualDebtService = pmt(monthlyRate, nper, loanAmount) * 12;
+
+  let debtBalance = loanAmount;
+  let gpr = grossIncome;
+  let opexYear = opex;
+
+  const years = [];
+  const cashflows = [-equity];
+
+  for (let y = 1; y <= holdYears; y++) {
+    if (y > 1) {
+      gpr *= 1 + rentGrowth;
+      opexYear *= 1 + expenseGrowth;
+    }
+
+    const egi = gpr * (1 - vacancyRate) + otherIncome;
+    const noi = egi - opexYear;
+    const capRate = purchasePrice ? noi / purchasePrice : 0;
+
+    let interestPaid = 0;
+    let principalPaid = 0;
+    for (let m = 0; m < 12; m++) {
+      const interest = debtBalance * monthlyRate;
+      const principal = Math.max(0, (annualDebtService / 12) - interest);
+      interestPaid += interest;
+      principalPaid += principal;
+      debtBalance = Math.max(0, debtBalance - principal);
+    }
+
+    const debtService = interestPaid + principalPaid;
+    const cashFlow = noi - debtService;
+    const dscr = debtService > 0 ? noi / debtService : 0;
+
+    years.push({ year: y, gpr, egi, opex: opexYear, noi, debtService, cashFlow, dscr, capRate, debtBalance });
+    cashflows.push(cashFlow);
+  }
+
+  const terminalNoi = years[years.length - 1].noi * (1 + rentGrowth);
+  const salePrice = exitCap > 0 ? terminalNoi / exitCap : purchasePrice;
+  const netSale = salePrice - debtBalance;
+  cashflows[cashflows.length - 1] += netSale;
+
+  const totalDistributions = cashflows.slice(1).reduce((a, b) => a + b, 0);
+  const irrValue = irr(cashflows, 0.15);
+  const coc = equity > 0 ? years[0].cashFlow / equity : 0;
+  const multiple = equity > 0 ? totalDistributions / equity : 0;
+
+  return {
+    assumptions: { purchasePrice, grossIncome, vacancyRate, opex, ltv, interestRate, amortYears, holdYears, rentGrowth, expenseGrowth, exitCap },
+    equity,
+    loanAmount,
+    annualDebtService,
+    salePrice,
+    netSale,
+    irr: irrValue,
+    cashOnCash: coc,
+    equityMultiple: multiple,
+    years,
+  };
 }
 
 /* ═══ FORM COMPONENTS ═══ */
@@ -175,8 +283,8 @@ function FinStep({ d, set, ex }) {
       <p style={{ fontSize: 13, color: B.td, marginBottom: 24 }}>Enter what you know. AI flags gaps.</p>
       <Section title="Acquisition" fields={[["Asking Price","askingPrice",{t:"number",pfx:"$",req:1}],["Your Offer","offerPrice",{t:"number",pfx:"$"}],["$/Unit","pricePerUnit",{t:"number",pfx:"$"}],["$/SF","pricePerSF",{t:"number",pfx:"$"}]]} />
       <Section title="Income" fields={[["Gross Rental (Annual)","grossIncome",{t:"number",pfx:"$"}],["Other Income (Annual)","otherIncome",{t:"number",pfx:"$"}],["Occupancy (%)","occupancy",{t:"number",ph:"92"}],["Market Rent (unit/mo)","marketRent",{t:"number",pfx:"$"}]]} />
-      <Section title="Expenses & Debt" fields={[["OpEx (Annual)","opex",{t:"number",pfx:"$"}],["Taxes (Annual)","taxes",{t:"number",pfx:"$"}],["Insurance (Annual)","insurance",{t:"number",pfx:"$"}],["Capex","capex",{t:"number",pfx:"$"}],["LTV (%)","ltv",{t:"number",ph:"75",hint:"65-80%"}],["Rate (%)","interestRate",{t:"number",ph:"7.25"}]]} />
-      <Section title="Targets" fields={[["CoC (%)","targetCoC",{t:"number",ph:"8"}],["IRR (%)","targetIRR",{t:"number",ph:"18"}],["Multiple","targetMultiple",{ph:"2.0x"}],["Hold (yrs)","holdPeriod",{t:"number",ph:"5"}]]} />
+      <Section title="Expenses & Debt" fields={[["OpEx (Annual)","opex",{t:"number",pfx:"$"}],["Taxes (Annual)","taxes",{t:"number",pfx:"$"}],["Insurance (Annual)","insurance",{t:"number",pfx:"$"}],["Capex","capex",{t:"number",pfx:"$"}],["LTV (%)","ltv",{t:"number",ph:"75",hint:"65-80%"}],["Rate (%)","interestRate",{t:"number",ph:"7.25"}],["Amortization (yrs)","amortizationYears",{t:"number",ph:"30"}],["Exit Cap (%)","exitCapRate",{t:"number",ph:"6.25"}]]} />
+      <Section title="Targets & Growth" fields={[["CoC (%)","targetCoC",{t:"number",ph:"8"}],["IRR (%)","targetIRR",{t:"number",ph:"18"}],["Multiple","targetMultiple",{ph:"2.0x"}],["Hold (yrs)","holdPeriod",{t:"number",ph:"5"}],["Rent Growth (%)","rentGrowth",{t:"number",ph:"3"}],["Expense Growth (%)","expenseGrowth",{t:"number",ph:"2.5"}]]} />
     </div>
   );
 }
@@ -332,7 +440,49 @@ function QCards({ questions }) {
 }
 
 /* ═══ ANALYSIS STEP ═══ */
-function AnalysisStep({ d, analysis, loading, onRun, followUps, onFollowUp }) {
+function ProFormaSummary({ dcf }) {
+  if (!dcf) return null;
+  const fmtMoney = v => `$${Math.round(v || 0).toLocaleString()}`;
+  const fmtPct = v => `${(Number(v || 0) * 100).toFixed(2)}%`;
+
+  return (
+    <div style={{ marginBottom: 24 }}>
+      <h3 style={{ fontSize: 16, marginBottom: 10, color: B.t }}>5-Year Pro Forma</h3>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 10, marginBottom: 14 }}>
+        <div style={{ background: B.bg, border: `1px solid ${B.bd}`, borderRadius: 10, padding: 10 }}><div style={{ fontSize: 11, color: B.td }}>IRR</div><div style={{ fontSize: 18, color: B.a, fontWeight: 700 }}>{fmtPct(dcf.irr)}</div></div>
+        <div style={{ background: B.bg, border: `1px solid ${B.bd}`, borderRadius: 10, padding: 10 }}><div style={{ fontSize: 11, color: B.td }}>Cash-on-Cash</div><div style={{ fontSize: 18, color: B.a, fontWeight: 700 }}>{fmtPct(dcf.cashOnCash)}</div></div>
+        <div style={{ background: B.bg, border: `1px solid ${B.bd}`, borderRadius: 10, padding: 10 }}><div style={{ fontSize: 11, color: B.td }}>Equity Multiple</div><div style={{ fontSize: 18, color: B.a, fontWeight: 700 }}>{dcf.equityMultiple.toFixed(2)}x</div></div>
+        <div style={{ background: B.bg, border: `1px solid ${B.bd}`, borderRadius: 10, padding: 10 }}><div style={{ fontSize: 11, color: B.td }}>Exit Value</div><div style={{ fontSize: 18, color: B.a, fontWeight: 700 }}>{fmtMoney(dcf.salePrice)}</div></div>
+      </div>
+      <div style={{ borderRadius: 12, overflow: "hidden", border: `1px solid ${B.bd}` }}>
+        <table style={{ width: "100%", borderCollapse: "collapse" }}>
+          <thead><tr style={{ background: B.bg }}>
+            <th style={{ padding: "10px 12px", fontSize: 11, color: B.td, textAlign: "left" }}>Year</th>
+            <th style={{ padding: "10px 12px", fontSize: 11, color: B.td, textAlign: "right" }}>NOI</th>
+            <th style={{ padding: "10px 12px", fontSize: 11, color: B.td, textAlign: "right" }}>Debt Service</th>
+            <th style={{ padding: "10px 12px", fontSize: 11, color: B.td, textAlign: "right" }}>Cash Flow</th>
+            <th style={{ padding: "10px 12px", fontSize: 11, color: B.td, textAlign: "right" }}>DSCR</th>
+            <th style={{ padding: "10px 12px", fontSize: 11, color: B.td, textAlign: "right" }}>Cap Rate</th>
+          </tr></thead>
+          <tbody>
+            {dcf.years.map((y, i) => (
+              <tr key={y.year} style={{ borderTop: `1px solid ${B.bd}`, background: i % 2 ? B.bg + "88" : "transparent" }}>
+                <td style={{ padding: "10px 12px", color: B.t }}>{y.year}</td>
+                <td style={{ padding: "10px 12px", color: B.t, textAlign: "right", fontFamily: "monospace" }}>{fmtMoney(y.noi)}</td>
+                <td style={{ padding: "10px 12px", color: B.t, textAlign: "right", fontFamily: "monospace" }}>{fmtMoney(y.debtService)}</td>
+                <td style={{ padding: "10px 12px", color: B.a, textAlign: "right", fontFamily: "monospace" }}>{fmtMoney(y.cashFlow)}</td>
+                <td style={{ padding: "10px 12px", color: B.t, textAlign: "right" }}>{y.dscr.toFixed(2)}x</td>
+                <td style={{ padding: "10px 12px", color: B.t, textAlign: "right" }}>{fmtPct(y.capRate)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function AnalysisStep({ d, dcf, analysis, loading, onRun, followUps, onFollowUp }) {
   const [text, setText] = useState("");
   const [tab, setTab] = useState("overview");
   const a = analysis;
@@ -346,13 +496,16 @@ function AnalysisStep({ d, analysis, loading, onRun, followUps, onFollowUp }) {
   );
 
   if (!a) return (
-    <div style={{ textAlign: "center", padding: "48px 0" }}>
-      <div style={{ width: 80, height: 80, borderRadius: 16, background: B.as, display: "inline-flex", alignItems: "center", justifyContent: "center", marginBottom: 24 }}>
-        <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke={B.a} strokeWidth="1.5"><path d="M12 2L2 7l10 5 10-5-10-5z" /><path d="M2 17l10 5 10-5" /><path d="M2 12l10 5 10-5" /></svg>
+    <div>
+      <ProFormaSummary dcf={dcf} />
+      <div style={{ textAlign: "center", padding: "24px 0 48px" }}>
+        <div style={{ width: 80, height: 80, borderRadius: 16, background: B.as, display: "inline-flex", alignItems: "center", justifyContent: "center", marginBottom: 24 }}>
+          <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke={B.a} strokeWidth="1.5"><path d="M12 2L2 7l10 5 10-5-10-5z" /><path d="M2 17l10 5 10-5" /><path d="M2 12l10 5 10-5" /></svg>
+        </div>
+        <h3 style={{ fontSize: 18, fontWeight: 600, color: B.t, marginBottom: 8 }}>Ready to Underwrite</h3>
+        <p style={{ fontSize: 12, color: B.td, marginBottom: 32 }}>Generates AI risk narrative + DD checklist on top of your pro forma.</p>
+        <button onClick={onRun} style={{ padding: "12px 32px", borderRadius: 12, fontSize: 13, fontWeight: 600, background: B.a, color: "#fff", border: "none", cursor: "pointer" }}>Run Analysis →</button>
       </div>
-      <h3 style={{ fontSize: 18, fontWeight: 600, color: B.t, marginBottom: 8 }}>Ready to Underwrite</h3>
-      <p style={{ fontSize: 12, color: B.td, marginBottom: 32 }}>Generates pro forma metrics, risk scorecard, and DD checklist.</p>
-      <button onClick={onRun} style={{ padding: "12px 32px", borderRadius: 12, fontSize: 13, fontWeight: 600, background: B.a, color: "#fff", border: "none", cursor: "pointer" }}>Run Analysis →</button>
     </div>
   );
 
@@ -378,6 +531,8 @@ function AnalysisStep({ d, analysis, loading, onRun, followUps, onFollowUp }) {
           <button key={t.id} onClick={() => setTab(t.id)} style={{ padding: "8px 14px", fontSize: 12, fontWeight: 500, borderRadius: 8, whiteSpace: "nowrap", cursor: "pointer", background: tab === t.id ? B.a : B.bg, color: tab === t.id ? "#fff" : B.td, border: `1px solid ${tab === t.id ? B.a : B.bd}` }}>{t.n}</button>
         ))}
       </div>
+
+      <ProFormaSummary dcf={dcf} />
 
       {tab === "overview" && (
         <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
@@ -466,12 +621,14 @@ export default function App() {
   const [exResult, setExResult] = useState(null);
   const [exFields, setExFields] = useState({});
   const [docCtx, setDocCtx] = useState("");
-  const [d, setD] = useState({ name: "", propertyType: "", market: "", address: "", source: "", units: "", yearBuilt: "", lotSize: "", sqft: "", description: "", askingPrice: "", offerPrice: "", pricePerUnit: "", pricePerSF: "", grossIncome: "", otherIncome: "", occupancy: "", marketRent: "", opex: "", taxes: "", insurance: "", capex: "", ltv: "", interestRate: "", targetCoC: "", targetIRR: "", targetMultiple: "", holdPeriod: "", submarket: "", comps: "", businessPlan: "", knownRisks: "", additionalNotes: "" });
+  const [d, setD] = useState({ name: "", propertyType: "", market: "", address: "", source: "", units: "", yearBuilt: "", lotSize: "", sqft: "", description: "", askingPrice: "", offerPrice: "", pricePerUnit: "", pricePerSF: "", grossIncome: "", otherIncome: "", occupancy: "", marketRent: "", opex: "", taxes: "", insurance: "", capex: "", ltv: "", interestRate: "", amortizationYears: 30, rentGrowth: 3, expenseGrowth: 2.5, exitCapRate: 6.25, targetCoC: "", targetIRR: "", targetMultiple: "", holdPeriod: "", submarket: "", comps: "", businessPlan: "", knownRisks: "", additionalNotes: "" });
   const [analysis, setAnalysis] = useState(null);
   const [loading, setLoading] = useState(false);
   const [followUps, setFollowUps] = useState([]);
   const [credits, setCredits] = useState(null);
   const [creditError, setCreditError] = useState("");
+
+  const dcf = useMemo(() => buildDCF(d), [d]);
 
   async function loadCredits() {
     try {
@@ -642,7 +799,7 @@ export default function App() {
           {step === 1 && <PropertyStep d={d} set={setD} ex={exFields} />}
           {step === 2 && <FinStep d={d} set={setD} ex={exFields} />}
           {step === 3 && <MktStep d={d} set={setD} ex={exFields} />}
-          {step === 4 && <AnalysisStep d={d} analysis={analysis} loading={loading} onRun={runAnalysis} followUps={followUps} onFollowUp={handleFollowUp} />}
+          {step === 4 && <AnalysisStep d={d} dcf={dcf} analysis={analysis} loading={loading} onRun={runAnalysis} followUps={followUps} onFollowUp={handleFollowUp} />}
         </div>
 
         {/* Nav buttons */}
