@@ -2,6 +2,7 @@ import { useState, useRef, useEffect, useMemo } from "react";
 import { useAuth } from "@clerk/clerk-react";
 import { jsPDF } from "jspdf";
 import autoTable from "jspdf-autotable";
+import * as XLSX from "xlsx";
 
 const STEPS = ["Upload", "Property", "Financials", "Market", "Analysis"];
 const PTYPES = ["Multifamily","Single Family Portfolio","Mixed-Use","Land/Development","Office","Retail","Industrial","Self-Storage","Mobile Home Park","Hotel"];
@@ -631,7 +632,7 @@ function AuditChecklist({ report }) {
   );
 }
 
-function AnalysisStep({ d, dcf, auditReport, sensitivity, onSensitivityChange, analysis, loading, onRun, followUps, onFollowUp }) {
+function AnalysisStep({ d, dcf, auditReport, sensitivity, onSensitivityChange, loi, onLoiChange, analysis, loading, onRun, followUps, onFollowUp }) {
   const [text, setText] = useState("");
   const [tab, setTab] = useState("overview");
   const a = analysis;
@@ -643,7 +644,6 @@ function AnalysisStep({ d, dcf, auditReport, sensitivity, onSensitivityChange, a
     const fmtMoney = v => `$${Math.round(v || 0).toLocaleString()}`;
     const fmtPct = v => `${(Number(v || 0) * 100).toFixed(2)}%`;
 
-    // Cover
     doc.setFillColor(9, 9, 11);
     doc.rect(0, 0, 595, 842, "F");
     doc.setTextColor(99, 255, 217);
@@ -658,7 +658,6 @@ function AnalysisStep({ d, dcf, auditReport, sensitivity, onSensitivityChange, a
     doc.text(d.address || d.market || "", left, 195);
     doc.text(`Generated: ${new Date().toLocaleString()}`, left, 220);
 
-    // Executive summary
     doc.addPage();
     doc.setFontSize(18);
     doc.setTextColor(20, 20, 20);
@@ -670,23 +669,14 @@ function AnalysisStep({ d, dcf, auditReport, sensitivity, onSensitivityChange, a
     doc.text(`Risk Score: ${auditReport?.score ?? "N/A"}/100`, left, 134);
     if (auditReport?.summary) doc.text(`Risk Summary: ${auditReport.summary}`, left, 152);
 
-    // Cash flow table
     autoTable(doc, {
       startY: 185,
       head: [["Year", "NOI", "Debt Service", "Cash Flow", "DSCR", "Cap Rate"]],
-      body: dcf.years.map(y => [
-        y.year,
-        fmtMoney(y.noi),
-        fmtMoney(y.debtService),
-        fmtMoney(y.cashFlow),
-        `${y.dscr.toFixed(2)}x`,
-        fmtPct(y.capRate),
-      ]),
+      body: dcf.years.map(y => [y.year, fmtMoney(y.noi), fmtMoney(y.debtService), fmtMoney(y.cashFlow), `${y.dscr.toFixed(2)}x`, fmtPct(y.capRate)]),
       styles: { fontSize: 9 },
       headStyles: { fillColor: [17, 24, 39] },
     });
 
-    // Sensitivity assumptions
     let nextY = doc.lastAutoTable?.finalY ? doc.lastAutoTable.finalY + 20 : 420;
     doc.setFontSize(14);
     doc.text("Sensitivity Assumptions", left, nextY);
@@ -694,18 +684,11 @@ function AnalysisStep({ d, dcf, auditReport, sensitivity, onSensitivityChange, a
     autoTable(doc, {
       startY: nextY,
       head: [["Vacancy", "Rent Growth", "Expense Growth", "Exit Cap", "Interest Rate"]],
-      body: [[
-        `${Number(sensitivity.vacancyRate).toFixed(2)}%`,
-        `${Number(sensitivity.rentGrowth).toFixed(2)}%`,
-        `${Number(sensitivity.expenseGrowth).toFixed(2)}%`,
-        `${Number(sensitivity.exitCapRate).toFixed(2)}%`,
-        `${Number(sensitivity.interestRate).toFixed(2)}%`,
-      ]],
+      body: [[`${Number(sensitivity.vacancyRate).toFixed(2)}%`, `${Number(sensitivity.rentGrowth).toFixed(2)}%`, `${Number(sensitivity.expenseGrowth).toFixed(2)}%`, `${Number(sensitivity.exitCapRate).toFixed(2)}%`, `${Number(sensitivity.interestRate).toFixed(2)}%`]],
       styles: { fontSize: 9 },
       headStyles: { fillColor: [39, 39, 42] },
     });
 
-    // Risk checks summary
     doc.addPage();
     doc.setFontSize(18);
     doc.text("Risk Score & DD Flags", left, 50);
@@ -722,6 +705,108 @@ function AnalysisStep({ d, dcf, auditReport, sensitivity, onSensitivityChange, a
     });
 
     doc.save(`${(d.name || "proformai-underwrite").replace(/\s+/g, "-").toLowerCase()}-report.pdf`);
+  }
+
+  function exportLoiPdf() {
+    if (!dcf) return;
+    const doc = new jsPDF({ unit: "pt", format: "a4" });
+    const left = 40;
+    const price = Math.round(dcf.assumptions.purchasePrice || 0).toLocaleString();
+    const today = new Date().toLocaleDateString();
+    doc.setFontSize(16);
+    doc.text("Letter of Intent (LOI)", left, 50);
+    doc.setFontSize(11);
+    const lines = [
+      `Date: ${today}`,
+      `Purchaser: ${loi.purchaser || "[Purchaser Name]"}`,
+      `Property: ${d.name || "Subject Property"} (${d.address || d.market || "N/A"})`,
+      `Purchase Price: $${price}`,
+      `Earnest Money: $${Math.round(Number(loi.earnestMoney || 0)).toLocaleString()}`,
+      `Due Diligence Period: ${loi.dueDiligenceDays || 21} days`,
+      `Closing Timeline: ${loi.closingDays || 45} days from PSA execution`,
+      `Contingencies: ${loi.contingencies || "Financing, inspection, title"}`,
+      "",
+      "This non-binding LOI summarizes principal business terms and is subject to definitive agreements."
+    ];
+    let y = 85;
+    lines.forEach(line => { doc.text(line, left, y); y += 20; });
+    doc.save(`${(d.name || "deal").replace(/\s+/g, "-").toLowerCase()}-loi.pdf`);
+  }
+
+  function exportLoiDoc() {
+    if (!dcf) return;
+    const price = Math.round(dcf.assumptions.purchasePrice || 0).toLocaleString();
+    const body = `Letter of Intent (LOI)\n\nDate: ${new Date().toLocaleDateString()}\nPurchaser: ${loi.purchaser || "[Purchaser Name]"}\nProperty: ${d.name || "Subject Property"} (${d.address || d.market || "N/A"})\nPurchase Price: $${price}\nEarnest Money: $${Math.round(Number(loi.earnestMoney || 0)).toLocaleString()}\nDue Diligence Period: ${loi.dueDiligenceDays || 21} days\nClosing Timeline: ${loi.closingDays || 45} days\nContingencies: ${loi.contingencies || "Financing, inspection, and title review"}\n\nThis non-binding LOI summarizes principal business terms and is subject to definitive agreements.`;
+    const blob = new Blob([body], { type: "application/msword" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `${(d.name || "deal").replace(/\s+/g, "-").toLowerCase()}-loi.doc`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  }
+
+  function exportExcel() {
+    if (!dcf) return;
+    const wb = XLSX.utils.book_new();
+    const summary = [
+      ["ProformAI Pro Forma Summary"],
+      ["Deal", d.name || ""],
+      ["Market", d.market || ""],
+      ["Purchase Price", dcf.assumptions.purchasePrice],
+      ["Loan Amount", dcf.loanAmount],
+      ["Equity", dcf.equity],
+      ["IRR", dcf.irr],
+      ["Cash-on-Cash", dcf.cashOnCash],
+      ["Equity Multiple", dcf.equityMultiple],
+      ["Risk Score", auditReport?.score ?? ""],
+    ];
+    const wsSummary = XLSX.utils.aoa_to_sheet(summary);
+
+    const cashRows = [["Year", "GPR", "EGI", "Opex", "NOI", "Debt Service", "Cash Flow", "DSCR", "Cap Rate"]];
+    dcf.years.forEach(y => cashRows.push([y.year, y.gpr, y.egi, y.opex, y.noi, y.debtService, y.cashFlow, y.dscr, y.capRate]));
+    const wsCash = XLSX.utils.aoa_to_sheet(cashRows);
+
+    const sensRows = [
+      ["Variable", "Value"],
+      ["Vacancy Rate", sensitivity.vacancyRate],
+      ["Rent Growth", sensitivity.rentGrowth],
+      ["Expense Growth", sensitivity.expenseGrowth],
+      ["Exit Cap Rate", sensitivity.exitCapRate],
+      ["Interest Rate", sensitivity.interestRate],
+      ["IRR", dcf.irr],
+      ["Cash-on-Cash", dcf.cashOnCash],
+      ["Equity Multiple", dcf.equityMultiple],
+    ];
+    const wsSens = XLSX.utils.aoa_to_sheet(sensRows);
+
+    const asmpRows = [
+      ["Assumption", "Value"],
+      ["Purchase Price", dcf.assumptions.purchasePrice],
+      ["Gross Income", dcf.assumptions.grossIncome],
+      ["Vacancy Rate", dcf.assumptions.vacancyRate],
+      ["Opex", dcf.assumptions.opex],
+      ["LTV", dcf.assumptions.ltv],
+      ["Interest", dcf.assumptions.interestRate],
+      ["Amortization Years", dcf.assumptions.amortYears],
+      ["Hold Years", dcf.assumptions.holdYears],
+      ["Rent Growth", dcf.assumptions.rentGrowth],
+      ["Expense Growth", dcf.assumptions.expenseGrowth],
+      ["Exit Cap", dcf.assumptions.exitCap],
+    ];
+    const wsAsmp = XLSX.utils.aoa_to_sheet(asmpRows);
+
+    // Add a few formulas for editability
+    wsCash["J1"] = { t: "s", v: "NOI Margin" };
+    for (let r = 2; r <= dcf.years.length + 1; r++) {
+      wsCash[`J${r}`] = { t: "n", f: `IF(C${r}=0,0,E${r}/C${r})` };
+    }
+
+    XLSX.utils.book_append_sheet(wb, wsSummary, "Summary");
+    XLSX.utils.book_append_sheet(wb, wsCash, "Cash Flows");
+    XLSX.utils.book_append_sheet(wb, wsSens, "Sensitivity");
+    XLSX.utils.book_append_sheet(wb, wsAsmp, "Assumptions");
+
+    XLSX.writeFile(wb, `${(d.name || "proformai").replace(/\s+/g, "-").toLowerCase()}-proforma.xlsx`);
   }
 
   if (loading) return (
@@ -761,8 +846,11 @@ function AnalysisStep({ d, dcf, auditReport, sensitivity, onSensitivityChange, a
     <div>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
         <div><h2 style={{ fontSize: 18, fontWeight: 600, color: B.t, margin: 0 }}>Deal Analysis</h2><p style={{ fontSize: 11, color: B.td, margin: 0 }}>{d.name} — {d.market}</p></div>
-        <div style={{ display: "flex", gap: 8 }}>
-          {dcf && <button onClick={exportInvestorPdf} style={{ fontSize: 11, padding: "6px 14px", borderRadius: 8, background: B.g, color: "#052e16", border: "none", cursor: "pointer", fontWeight: 700 }}>Download PDF</button>}
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
+          {dcf && <button onClick={exportInvestorPdf} style={{ fontSize: 11, padding: "6px 14px", borderRadius: 8, background: B.g, color: "#052e16", border: "none", cursor: "pointer", fontWeight: 700 }}>Investor PDF</button>}
+          {dcf && <button onClick={exportLoiPdf} style={{ fontSize: 11, padding: "6px 14px", borderRadius: 8, background: B.as, color: B.a, border: `1px solid ${B.a}55`, cursor: "pointer" }}>LOI PDF</button>}
+          {dcf && <button onClick={exportLoiDoc} style={{ fontSize: 11, padding: "6px 14px", borderRadius: 8, background: B.as, color: B.a, border: `1px solid ${B.a}55`, cursor: "pointer" }}>LOI Word</button>}
+          {dcf && <button onClick={exportExcel} style={{ fontSize: 11, padding: "6px 14px", borderRadius: 8, background: B.as, color: B.a, border: `1px solid ${B.a}55`, cursor: "pointer" }}>Excel Export</button>}
           <button onClick={onRun} style={{ fontSize: 11, padding: "6px 14px", borderRadius: 8, background: B.as, color: B.a, border: "none", cursor: "pointer" }}>Re-run</button>
         </div>
       </div>
@@ -775,6 +863,34 @@ function AnalysisStep({ d, dcf, auditReport, sensitivity, onSensitivityChange, a
 
       <ProFormaSummary dcf={dcf} sensitivity={sensitivity} onSensitivityChange={onSensitivityChange} />
       <AuditChecklist report={auditReport} />
+
+      {dcf && (
+        <div style={{ marginBottom: 24 }}>
+          <h3 style={{ fontSize: 16, marginBottom: 10, color: B.t }}>LOI Generator</h3>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 8 }}>
+            <div>
+              <div style={{ fontSize: 11, color: B.td, marginBottom: 4 }}>Purchaser</div>
+              <input value={loi.purchaser} onChange={e => onLoiChange("purchaser", e.target.value)} style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: `1px solid ${B.bd}`, background: B.bg, color: B.t }} placeholder="Entity name" />
+            </div>
+            <div>
+              <div style={{ fontSize: 11, color: B.td, marginBottom: 4 }}>Earnest Money ($)</div>
+              <input value={loi.earnestMoney} onChange={e => onLoiChange("earnestMoney", e.target.value)} style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: `1px solid ${B.bd}`, background: B.bg, color: B.t }} />
+            </div>
+            <div>
+              <div style={{ fontSize: 11, color: B.td, marginBottom: 4 }}>Due Diligence (days)</div>
+              <input value={loi.dueDiligenceDays} onChange={e => onLoiChange("dueDiligenceDays", e.target.value)} style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: `1px solid ${B.bd}`, background: B.bg, color: B.t }} />
+            </div>
+            <div>
+              <div style={{ fontSize: 11, color: B.td, marginBottom: 4 }}>Closing Timeline (days)</div>
+              <input value={loi.closingDays} onChange={e => onLoiChange("closingDays", e.target.value)} style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: `1px solid ${B.bd}`, background: B.bg, color: B.t }} />
+            </div>
+          </div>
+          <div>
+            <div style={{ fontSize: 11, color: B.td, marginBottom: 4 }}>Contingencies</div>
+            <input value={loi.contingencies} onChange={e => onLoiChange("contingencies", e.target.value)} style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: `1px solid ${B.bd}`, background: B.bg, color: B.t }} />
+          </div>
+        </div>
+      )}
 
       {tab === "overview" && (
         <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
@@ -875,6 +991,13 @@ export default function App() {
     expenseGrowth: 2.5,
     exitCapRate: 6.25,
     interestRate: 7.25,
+  });
+  const [loi, setLoi] = useState({
+    purchaser: "",
+    earnestMoney: "50000",
+    dueDiligenceDays: "21",
+    closingDays: "45",
+    contingencies: "Financing, inspection, and title review",
   });
 
   useEffect(() => {
@@ -1069,7 +1192,7 @@ export default function App() {
           {step === 1 && <PropertyStep d={d} set={setD} ex={exFields} />}
           {step === 2 && <FinStep d={d} set={setD} ex={exFields} />}
           {step === 3 && <MktStep d={d} set={setD} ex={exFields} />}
-          {step === 4 && <AnalysisStep d={d} dcf={dcf} auditReport={auditReport} sensitivity={sensitivity} onSensitivityChange={(key, value) => setSensitivity(s => ({ ...s, [key]: value }))} analysis={analysis} loading={loading} onRun={runAnalysis} followUps={followUps} onFollowUp={handleFollowUp} />}
+          {step === 4 && <AnalysisStep d={d} dcf={dcf} auditReport={auditReport} sensitivity={sensitivity} onSensitivityChange={(key, value) => setSensitivity(s => ({ ...s, [key]: value }))} loi={loi} onLoiChange={(key, value) => setLoi(s => ({ ...s, [key]: value }))} analysis={analysis} loading={loading} onRun={runAnalysis} followUps={followUps} onFollowUp={handleFollowUp} />}
         </div>
 
         {/* Nav buttons */}
