@@ -1,5 +1,7 @@
 import { useState, useRef, useEffect, useMemo } from "react";
 import { useAuth } from "@clerk/clerk-react";
+import { jsPDF } from "jspdf";
+import autoTable from "jspdf-autotable";
 
 const STEPS = ["Upload", "Property", "Financials", "Market", "Analysis"];
 const PTYPES = ["Multifamily","Single Family Portfolio","Mixed-Use","Land/Development","Office","Retail","Industrial","Self-Storage","Mobile Home Park","Hotel"];
@@ -634,6 +636,94 @@ function AnalysisStep({ d, dcf, auditReport, sensitivity, onSensitivityChange, a
   const [tab, setTab] = useState("overview");
   const a = analysis;
 
+  function exportInvestorPdf() {
+    if (!dcf) return;
+    const doc = new jsPDF({ unit: "pt", format: "a4" });
+    const left = 40;
+    const fmtMoney = v => `$${Math.round(v || 0).toLocaleString()}`;
+    const fmtPct = v => `${(Number(v || 0) * 100).toFixed(2)}%`;
+
+    // Cover
+    doc.setFillColor(9, 9, 11);
+    doc.rect(0, 0, 595, 842, "F");
+    doc.setTextColor(99, 255, 217);
+    doc.setFontSize(34);
+    doc.text("ProformAI", left, 90);
+    doc.setTextColor(228, 228, 231);
+    doc.setFontSize(20);
+    doc.text("Investor Underwriting Report", left, 130);
+    doc.setFontSize(14);
+    doc.text(d.name || "Untitled Deal", left, 170);
+    doc.setTextColor(113, 113, 122);
+    doc.text(d.address || d.market || "", left, 195);
+    doc.text(`Generated: ${new Date().toLocaleString()}`, left, 220);
+
+    // Executive summary
+    doc.addPage();
+    doc.setFontSize(18);
+    doc.setTextColor(20, 20, 20);
+    doc.text("Executive Summary", left, 50);
+    doc.setFontSize(11);
+    doc.text(`Purchase Price: ${fmtMoney(dcf.assumptions.purchasePrice)}`, left, 80);
+    doc.text(`Loan Amount: ${fmtMoney(dcf.loanAmount)} | Equity: ${fmtMoney(dcf.equity)}`, left, 98);
+    doc.text(`IRR: ${fmtPct(dcf.irr)} | CoC: ${fmtPct(dcf.cashOnCash)} | Equity Multiple: ${dcf.equityMultiple.toFixed(2)}x`, left, 116);
+    doc.text(`Risk Score: ${auditReport?.score ?? "N/A"}/100`, left, 134);
+    if (auditReport?.summary) doc.text(`Risk Summary: ${auditReport.summary}`, left, 152);
+
+    // Cash flow table
+    autoTable(doc, {
+      startY: 185,
+      head: [["Year", "NOI", "Debt Service", "Cash Flow", "DSCR", "Cap Rate"]],
+      body: dcf.years.map(y => [
+        y.year,
+        fmtMoney(y.noi),
+        fmtMoney(y.debtService),
+        fmtMoney(y.cashFlow),
+        `${y.dscr.toFixed(2)}x`,
+        fmtPct(y.capRate),
+      ]),
+      styles: { fontSize: 9 },
+      headStyles: { fillColor: [17, 24, 39] },
+    });
+
+    // Sensitivity assumptions
+    let nextY = doc.lastAutoTable?.finalY ? doc.lastAutoTable.finalY + 20 : 420;
+    doc.setFontSize(14);
+    doc.text("Sensitivity Assumptions", left, nextY);
+    nextY += 14;
+    autoTable(doc, {
+      startY: nextY,
+      head: [["Vacancy", "Rent Growth", "Expense Growth", "Exit Cap", "Interest Rate"]],
+      body: [[
+        `${Number(sensitivity.vacancyRate).toFixed(2)}%`,
+        `${Number(sensitivity.rentGrowth).toFixed(2)}%`,
+        `${Number(sensitivity.expenseGrowth).toFixed(2)}%`,
+        `${Number(sensitivity.exitCapRate).toFixed(2)}%`,
+        `${Number(sensitivity.interestRate).toFixed(2)}%`,
+      ]],
+      styles: { fontSize: 9 },
+      headStyles: { fillColor: [39, 39, 42] },
+    });
+
+    // Risk checks summary
+    doc.addPage();
+    doc.setFontSize(18);
+    doc.text("Risk Score & DD Flags", left, 50);
+    doc.setFontSize(11);
+    doc.text(`Risk Score: ${auditReport?.score ?? "N/A"}/100`, left, 72);
+    const checks = (auditReport?.checks || []).slice(0, 35).map(c => [c.status.toUpperCase(), c.title, c.detail]);
+    autoTable(doc, {
+      startY: 90,
+      head: [["Status", "Check", "Detail"]],
+      body: checks,
+      styles: { fontSize: 8 },
+      headStyles: { fillColor: [17, 24, 39] },
+      columnStyles: { 0: { cellWidth: 60 }, 1: { cellWidth: 190 }, 2: { cellWidth: 250 } },
+    });
+
+    doc.save(`${(d.name || "proformai-underwrite").replace(/\s+/g, "-").toLowerCase()}-report.pdf`);
+  }
+
   if (loading) return (
     <div style={{ textAlign: "center", padding: "80px 0" }}>
       <div style={{ width: 64, height: 64, borderRadius: "50%", border: "2px solid transparent", borderTopColor: B.a, borderRightColor: B.a, animation: "spin 1s linear infinite", margin: "0 auto 24px" }} />
@@ -671,7 +761,10 @@ function AnalysisStep({ d, dcf, auditReport, sensitivity, onSensitivityChange, a
     <div>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
         <div><h2 style={{ fontSize: 18, fontWeight: 600, color: B.t, margin: 0 }}>Deal Analysis</h2><p style={{ fontSize: 11, color: B.td, margin: 0 }}>{d.name} — {d.market}</p></div>
-        <button onClick={onRun} style={{ fontSize: 11, padding: "6px 14px", borderRadius: 8, background: B.as, color: B.a, border: "none", cursor: "pointer" }}>Re-run</button>
+        <div style={{ display: "flex", gap: 8 }}>
+          {dcf && <button onClick={exportInvestorPdf} style={{ fontSize: 11, padding: "6px 14px", borderRadius: 8, background: B.g, color: "#052e16", border: "none", cursor: "pointer", fontWeight: 700 }}>Download PDF</button>}
+          <button onClick={onRun} style={{ fontSize: 11, padding: "6px 14px", borderRadius: 8, background: B.as, color: B.a, border: "none", cursor: "pointer" }}>Re-run</button>
+        </div>
       </div>
 
       <div style={{ display: "flex", gap: 4, marginBottom: 24, overflowX: "auto", paddingBottom: 4 }}>
