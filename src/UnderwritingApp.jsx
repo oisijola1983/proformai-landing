@@ -440,10 +440,28 @@ function QCards({ questions }) {
 }
 
 /* ═══ ANALYSIS STEP ═══ */
-function ProFormaSummary({ dcf }) {
+function ProFormaSummary({ dcf, sensitivity, onSensitivityChange }) {
   if (!dcf) return null;
   const fmtMoney = v => `$${Math.round(v || 0).toLocaleString()}`;
   const fmtPct = v => `${(Number(v || 0) * 100).toFixed(2)}%`;
+
+  const Slider = ({ label, keyName, min, max, step = 0.1, suffix = "%" }) => (
+    <div style={{ background: B.bg, border: `1px solid ${B.bd}`, borderRadius: 10, padding: 10 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: B.td, marginBottom: 6 }}>
+        <span>{label}</span>
+        <span style={{ color: B.a }}>{Number(sensitivity[keyName]).toFixed(2)}{suffix}</span>
+      </div>
+      <input
+        type="range"
+        min={min}
+        max={max}
+        step={step}
+        value={sensitivity[keyName]}
+        onChange={e => onSensitivityChange(keyName, Number(e.target.value))}
+        style={{ width: "100%" }}
+      />
+    </div>
+  );
 
   return (
     <div style={{ marginBottom: 24 }}>
@@ -454,6 +472,17 @@ function ProFormaSummary({ dcf }) {
         <div style={{ background: B.bg, border: `1px solid ${B.bd}`, borderRadius: 10, padding: 10 }}><div style={{ fontSize: 11, color: B.td }}>Equity Multiple</div><div style={{ fontSize: 18, color: B.a, fontWeight: 700 }}>{dcf.equityMultiple.toFixed(2)}x</div></div>
         <div style={{ background: B.bg, border: `1px solid ${B.bd}`, borderRadius: 10, padding: 10 }}><div style={{ fontSize: 11, color: B.td }}>Exit Value</div><div style={{ fontSize: 18, color: B.a, fontWeight: 700 }}>{fmtMoney(dcf.salePrice)}</div></div>
       </div>
+
+      {sensitivity && onSensitivityChange && (
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 14 }}>
+          <Slider label="Vacancy Rate" keyName="vacancyRate" min={0} max={25} step={0.25} />
+          <Slider label="Rent Growth" keyName="rentGrowth" min={-2} max={10} step={0.25} />
+          <Slider label="Expense Growth" keyName="expenseGrowth" min={0} max={10} step={0.25} />
+          <Slider label="Exit Cap Rate" keyName="exitCapRate" min={3} max={10} step={0.1} />
+          <Slider label="Interest Rate" keyName="interestRate" min={3} max={14} step={0.1} />
+        </div>
+      )}
+
       <div style={{ borderRadius: 12, overflow: "hidden", border: `1px solid ${B.bd}` }}>
         <table style={{ width: "100%", borderCollapse: "collapse" }}>
           <thead><tr style={{ background: B.bg }}>
@@ -482,7 +511,7 @@ function ProFormaSummary({ dcf }) {
   );
 }
 
-function AnalysisStep({ d, dcf, analysis, loading, onRun, followUps, onFollowUp }) {
+function AnalysisStep({ d, dcf, sensitivity, onSensitivityChange, analysis, loading, onRun, followUps, onFollowUp }) {
   const [text, setText] = useState("");
   const [tab, setTab] = useState("overview");
   const a = analysis;
@@ -497,7 +526,7 @@ function AnalysisStep({ d, dcf, analysis, loading, onRun, followUps, onFollowUp 
 
   if (!a) return (
     <div>
-      <ProFormaSummary dcf={dcf} />
+      <ProFormaSummary dcf={dcf} sensitivity={sensitivity} onSensitivityChange={onSensitivityChange} />
       <div style={{ textAlign: "center", padding: "24px 0 48px" }}>
         <div style={{ width: 80, height: 80, borderRadius: 16, background: B.as, display: "inline-flex", alignItems: "center", justifyContent: "center", marginBottom: 24 }}>
           <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke={B.a} strokeWidth="1.5"><path d="M12 2L2 7l10 5 10-5-10-5z" /><path d="M2 17l10 5 10-5" /><path d="M2 12l10 5 10-5" /></svg>
@@ -532,7 +561,7 @@ function AnalysisStep({ d, dcf, analysis, loading, onRun, followUps, onFollowUp 
         ))}
       </div>
 
-      <ProFormaSummary dcf={dcf} />
+      <ProFormaSummary dcf={dcf} sensitivity={sensitivity} onSensitivityChange={onSensitivityChange} />
 
       {tab === "overview" && (
         <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
@@ -627,8 +656,35 @@ export default function App() {
   const [followUps, setFollowUps] = useState([]);
   const [credits, setCredits] = useState(null);
   const [creditError, setCreditError] = useState("");
+  const [sensitivity, setSensitivity] = useState({
+    vacancyRate: 6,
+    rentGrowth: 3,
+    expenseGrowth: 2.5,
+    exitCapRate: 6.25,
+    interestRate: 7.25,
+  });
 
-  const dcf = useMemo(() => buildDCF(d), [d]);
+  useEffect(() => {
+    setSensitivity(prev => ({
+      ...prev,
+      vacancyRate: num(d.occupancy) > 0 ? (100 - num(d.occupancy)) : prev.vacancyRate,
+      rentGrowth: num(d.rentGrowth, prev.rentGrowth),
+      expenseGrowth: num(d.expenseGrowth, prev.expenseGrowth),
+      exitCapRate: num(d.exitCapRate, prev.exitCapRate),
+      interestRate: num(d.interestRate, prev.interestRate),
+    }));
+  }, [d.occupancy, d.rentGrowth, d.expenseGrowth, d.exitCapRate, d.interestRate]);
+
+  const dcfInput = useMemo(() => ({
+    ...d,
+    occupancy: 100 - num(sensitivity.vacancyRate, 6),
+    rentGrowth: num(sensitivity.rentGrowth, 3),
+    expenseGrowth: num(sensitivity.expenseGrowth, 2.5),
+    exitCapRate: num(sensitivity.exitCapRate, 6.25),
+    interestRate: num(sensitivity.interestRate, 7.25),
+  }), [d, sensitivity]);
+
+  const dcf = useMemo(() => buildDCF(dcfInput), [dcfInput]);
 
   async function loadCredits() {
     try {
@@ -799,7 +855,7 @@ export default function App() {
           {step === 1 && <PropertyStep d={d} set={setD} ex={exFields} />}
           {step === 2 && <FinStep d={d} set={setD} ex={exFields} />}
           {step === 3 && <MktStep d={d} set={setD} ex={exFields} />}
-          {step === 4 && <AnalysisStep d={d} dcf={dcf} analysis={analysis} loading={loading} onRun={runAnalysis} followUps={followUps} onFollowUp={handleFollowUp} />}
+          {step === 4 && <AnalysisStep d={d} dcf={dcf} sensitivity={sensitivity} onSensitivityChange={(key, value) => setSensitivity(s => ({ ...s, [key]: value }))} analysis={analysis} loading={loading} onRun={runAnalysis} followUps={followUps} onFollowUp={handleFollowUp} />}
         </div>
 
         {/* Nav buttons */}
