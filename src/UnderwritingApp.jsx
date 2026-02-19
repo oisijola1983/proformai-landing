@@ -91,7 +91,8 @@ function buildDCF(input) {
   const lineReserves = num(input.expenseReserves, 0);
   const lineUtilities = num(input.expenseUtilities, 0);
   const managementPct = rate(input.managementPct, 0.02);
-  const fallbackOpex = num(input.opex, 0) || (startingGpr + commonFees) * 0.42;
+  const explicitOpex = num(input.opex, 0);
+  const fallbackOpex = explicitOpex || (startingGpr + commonFees) * 0.42;
   const opex = fallbackOpex;
 
   const ltv = rate(input.ltv, 0.70);
@@ -145,7 +146,8 @@ function buildDCF(input) {
     const taxes = taxesFlat;
     const reserves = reservesFlat;
     const utilities = utilitiesFlat;
-    const totalOpex = taxes + insurance + maintenance + management + reserves + utilities;
+    const hasDetailedOpex = lineTaxes > 0 || lineInsurance > 0 || lineMaintenance > 0 || lineManagementFixed > 0 || lineReserves > 0 || lineUtilities > 0;
+    const totalOpex = hasDetailedOpex ? (taxes + insurance + maintenance + management + reserves + utilities) : opex;
     const noi = egi - totalOpex;
     const capRate = purchasePrice ? noi / purchasePrice : 0;
 
@@ -194,7 +196,7 @@ function buildDCF(input) {
   const totalDistributions = cashflows.slice(1).reduce((a, b) => a + b, 0);
   const irrValue = irr(lpCashflows, 0.15);
   const cashLeftInDeal = num(input.cashLeftInDeal || input.cashRemainingAfterRefinance, 0);
-  const cocDenominator = cashLeftInDeal > 0 ? cashLeftInDeal : equity;
+  const cocDenominator = equity;
   const coc = cocDenominator > 0 ? years[0].cashFlow / cocDenominator : 0;
   const multiple = equity > 0 ? (lpExitPayout / equity) : 0;
 
