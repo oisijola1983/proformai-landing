@@ -79,7 +79,10 @@ function buildDCF(input) {
   const purchaseLoan = purchasePrice * ltv;
   const loanAmount = explicitLoan > 0 ? explicitLoan : (arvLoan > 0 ? arvLoan : purchaseLoan);
   const explicitEquity = num(input.equityRaise, 0);
-  const equity = explicitEquity > 0 ? explicitEquity : Math.max(0, purchasePrice - loanAmount);
+  const totalCapitalInvested = num(input.totalCapitalInvested, 0);
+  const totalProjectCost = num(input.totalProjectCost || input.allInTotalProjectCost, 0);
+  const fallbackDerivedEquity = totalProjectCost > 0 ? Math.max(0, totalProjectCost - loanAmount) : Math.max(0, purchasePrice - loanAmount);
+  const equity = explicitEquity > 0 ? explicitEquity : (totalCapitalInvested > 0 ? totalCapitalInvested : fallbackDerivedEquity);
 
   const interestRate = num(input.interestRate, 7.25) / 100;
   const amortYears = Math.max(1, num(input.amortizationYears, 30));
@@ -156,7 +159,7 @@ function buildDCF(input) {
   const multiple = equity > 0 ? totalDistributions / equity : 0;
 
   return {
-    assumptions: { purchasePrice, arv, grossIncome: startingGpr, vacancyRate, opex, ltv, interestRate, amortYears, holdYears, rentGrowth, expenseGrowth, exitCap, loanType, ioYears },
+    assumptions: { purchasePrice, arv, grossIncome: startingGpr, vacancyRate, opex, ltv, interestRate, amortYears, holdYears, rentGrowth, expenseGrowth, exitCap, loanType, ioYears, totalCapitalInvested, totalProjectCost },
     equity,
     loanAmount,
     annualDebtService: years[0]?.debtService || 0,
@@ -171,7 +174,8 @@ function buildDCF(input) {
     flags: {
       usedExplicitLoan: explicitLoan > 0,
       usedArvLoan: explicitLoan <= 0 && arvLoan > 0,
-      derivedEquity: !(explicitEquity > 0),
+      equitySource: explicitEquity > 0 ? "explicit_equity_raise" : (totalCapitalInvested > 0 ? "total_capital_invested" : "derived"),
+      derivedEquity: !(explicitEquity > 0 || totalCapitalInvested > 0),
     }
   };
 }
@@ -1050,7 +1054,7 @@ export default function App() {
   const [exResult, setExResult] = useState(null);
   const [exFields, setExFields] = useState({});
   const [docCtx, setDocCtx] = useState("");
-  const [d, setD] = useState({ name: "", propertyType: "", market: "", address: "", source: "", units: "", yearBuilt: "", lotSize: "", sqft: "", description: "", askingPrice: "", offerPrice: "", pricePerUnit: "", pricePerSF: "", grossIncome: "", otherIncome: "", occupancy: "", marketRent: "", opex: "", taxes: "", insurance: "", capex: "", expenseMaintenance: "", expenseManagement: "", expenseReserves: "", expenseUtilities: "", constructionCosts: "", softCosts: "", constructionLoanAmount: "", constructionLoanTermMonths: "", constructionInterestRate: "", refiLoanAmount: "", refiLtv: "", refiRate: "", ltv: "", loanAmount: "", equityRaise: "", arv: "", monthlyRentPerUnit: "", loanType: "amortizing", ioYears: "", interestRate: "", amortizationYears: 30, rentGrowth: 3, expenseGrowth: 2.5, exitCapRate: 6.25, targetCoC: "", targetIRR: "", targetMultiple: "", holdPeriod: "", submarket: "", comps: "", businessPlan: "", knownRisks: "", additionalNotes: "" });
+  const [d, setD] = useState({ name: "", propertyType: "", market: "", address: "", source: "", units: "", yearBuilt: "", lotSize: "", sqft: "", description: "", askingPrice: "", offerPrice: "", pricePerUnit: "", pricePerSF: "", grossIncome: "", otherIncome: "", occupancy: "", marketRent: "", opex: "", taxes: "", insurance: "", capex: "", expenseMaintenance: "", expenseManagement: "", expenseReserves: "", expenseUtilities: "", constructionCosts: "", softCosts: "", constructionLoanAmount: "", constructionLoanTermMonths: "", constructionInterestRate: "", refiLoanAmount: "", refiLtv: "", refiRate: "", ltv: "", loanAmount: "", equityRaise: "", totalCapitalInvested: "", totalProjectCost: "", arv: "", monthlyRentPerUnit: "", loanType: "amortizing", ioYears: "", interestRate: "", amortizationYears: 30, rentGrowth: 3, expenseGrowth: 2.5, exitCapRate: 6.25, targetCoC: "", targetIRR: "", targetMultiple: "", holdPeriod: "", submarket: "", comps: "", businessPlan: "", knownRisks: "", additionalNotes: "" });
   const [analysis, setAnalysis] = useState(null);
   const [loading, setLoading] = useState(false);
   const [followUps, setFollowUps] = useState([]);
