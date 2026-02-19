@@ -25,7 +25,16 @@ function parseJSON(raw) {
 }
 
 function num(v, d = 0) {
-  const n = Number(v);
+  if (v === null || v === undefined || v === "") return d;
+  if (typeof v === "number") return Number.isFinite(v) ? v : d;
+  const raw = String(v).trim();
+  if (!raw) return d;
+  const cleaned = raw
+    .replace(/[,\s]/g, "")
+    .replace(/\$/g, "")
+    .replace(/%/g, "")
+    .replace(/x$/i, "");
+  const n = Number(cleaned);
   return Number.isFinite(n) ? n : d;
 }
 
