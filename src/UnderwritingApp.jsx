@@ -154,25 +154,26 @@ function buildDCF(input) {
   const netSale = grossSale - saleCommission - debtBalance;
   cashflows[cashflows.length - 1] += netSale;
 
-  const refiCashOut = num(input.refiCashOut, 0);
-  if (refiCashOut > 0) {
-    cashflows[0] += refiCashOut; // treat as immediate return at stabilization/refi
-  }
+  const refiCashOut = num(input.refiCashOut, 0); // tracked at deal level, excluded from LP IRR series by convention
 
-  const lpPrefRate = num(input.lpPrefRate, 0) / 100;
-  const lpProfitShare = num(input.lpProfitShare, 0) / 100;
+  const lpPrefRate = num(input.lpPrefRate, 8) / 100;
+  const lpProfitShare = num(input.lpProfitShare, 45) / 100;
   const holdYearsPref = years.length;
-  const lpPrefTotal = lpPrefRate > 0 ? equity * lpPrefRate * holdYearsPref : 0;
+  const annualLpPref = equity * lpPrefRate;
+  const lpPrefTotal = annualLpPref * holdYearsPref;
   const exitProfit = Math.max(0, netSale);
-  const lpExitShare = lpProfitShare > 0 ? exitProfit * lpProfitShare : 0;
-  const lpExitPayout = lpPrefTotal + lpExitShare + (equity > 0 ? equity : 0);
+  const lpExitShare = exitProfit * lpProfitShare;
+  const lpExitPayout = (equity > 0 ? equity : 0) + lpPrefTotal + lpExitShare;
+
+  const lpCashflows = [-equity, ...years.map(() => annualLpPref)];
+  lpCashflows[lpCashflows.length - 1] += lpExitPayout;
 
   const totalDistributions = cashflows.slice(1).reduce((a, b) => a + b, 0);
-  const irrValue = irr(cashflows, 0.15);
+  const irrValue = irr(lpCashflows, 0.15);
   const cashLeftInDeal = num(input.cashLeftInDeal || input.cashRemainingAfterRefinance, 0);
   const cocDenominator = cashLeftInDeal > 0 ? cashLeftInDeal : equity;
   const coc = cocDenominator > 0 ? years[0].cashFlow / cocDenominator : 0;
-  const multiple = equity > 0 ? ((lpExitPayout > 0 ? lpExitPayout : totalDistributions) / equity) : 0;
+  const multiple = equity > 0 ? (lpExitPayout / equity) : 0;
 
   return {
     assumptions: { purchasePrice, arv, grossIncome: startingGpr, vacancyRate, opex, ltv, interestRate, amortYears, holdYears, rentGrowth, expenseGrowth, exitCap, loanType, ioYears, totalCapitalInvested, totalProjectCost, commonFees: commonFeesFlat, cashLeftInDeal: cashLeftInDeal || null, cocDenominator, refiCashOut, lpPrefRate, lpProfitShare },
@@ -186,6 +187,7 @@ function buildDCF(input) {
     cashOnCash: coc,
     equityMultiple: multiple,
     cashflows,
+    lpCashflows,
     lpExitPayout,
     lpPrefTotal,
     lpExitShare,
