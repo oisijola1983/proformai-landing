@@ -163,7 +163,10 @@ function buildDCF(input) {
   const lpPrefTotal = annualLpPref * holdYearsPref;
   const exitProfit = Math.max(0, netSale);
   const lpExitShare = exitProfit * lpProfitShare;
-  const lpExitPayout = (equity > 0 ? equity : 0) + lpPrefTotal + lpExitShare;
+
+  // Option B default: pref paid annually, so subtract cumulative pref from terminal payout
+  const grossLpExitPayout = (equity > 0 ? equity : 0) + lpPrefTotal + lpExitShare;
+  const lpExitPayout = Math.max(0, grossLpExitPayout - lpPrefTotal);
 
   const lpCashflows = [-equity, ...years.map(() => annualLpPref)];
   lpCashflows[lpCashflows.length - 1] += lpExitPayout;
