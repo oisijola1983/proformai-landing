@@ -63,15 +63,16 @@ function buildDCF(input) {
 
   const vacancyRate = num(input.occupancy) > 0 ? (100 - num(input.occupancy)) / 100 : Math.max(0, num(input.vacancyRate, 6) / 100);
 
+  const commonFees = num(input.commonFees, otherIncome);
   const lineTaxes = num(input.taxes, 0);
   const lineInsurance = num(input.insurance, 0);
   const lineMaintenance = num(input.expenseMaintenance, 0);
-  const lineManagement = num(input.expenseManagement, 0);
+  const lineManagementFixed = num(input.expenseManagement, 0);
   const lineReserves = num(input.expenseReserves, 0);
   const lineUtilities = num(input.expenseUtilities, 0);
-  const lineOpex = lineTaxes + lineInsurance + lineMaintenance + lineManagement + lineReserves + lineUtilities;
-  const fallbackOpex = num(input.opex, 0) || (startingGpr + otherIncome) * 0.42;
-  const opex = lineOpex > 0 ? lineOpex : fallbackOpex;
+  const managementPct = num(input.managementPct, 2) / 100;
+  const fallbackOpex = num(input.opex, 0) || (startingGpr + commonFees) * 0.42;
+  const opex = fallbackOpex;
 
   const ltv = num(input.ltv, 70) / 100;
   const explicitLoan = num(input.loanAmount, 0);
@@ -102,12 +103,12 @@ function buildDCF(input) {
 
   let debtBalance = loanAmount;
   let gpr = startingGpr;
-  let taxes = lineTaxes || (opex * 0.28);
+  const taxesFlat = lineTaxes || (opex * 0.28);
   let insurance = lineInsurance || (opex * 0.12);
   let maintenance = lineMaintenance || (opex * 0.22);
-  let management = lineManagement || (opex * 0.16);
-  let reserves = lineReserves || (opex * 0.10);
-  let utilities = lineUtilities || (opex * 0.12);
+  const reservesFlat = lineReserves;
+  const utilitiesFlat = lineUtilities;
+  const commonFeesFlat = commonFees;
 
   const years = [];
   const cashflows = [-equity];
@@ -115,15 +116,15 @@ function buildDCF(input) {
   for (let y = 1; y <= holdYears; y++) {
     if (y > 1) {
       gpr *= 1 + rentGrowth;
-      taxes *= 1 + expenseGrowth;
-      insurance *= 1 + expenseGrowth;
-      maintenance *= 1 + expenseGrowth;
-      management *= 1 + expenseGrowth;
-      reserves *= 1 + expenseGrowth;
-      utilities *= 1 + expenseGrowth;
+      insurance *= 1 + Math.max(0, num(input.insuranceGrowth, 5) / 100);
+      maintenance *= 1 + Math.max(0, num(input.maintenanceGrowth, 2) / 100);
     }
 
-    const egi = gpr * (1 - vacancyRate) + otherIncome;
+    const egi = gpr * (1 - vacancyRate) + commonFeesFlat;
+    const management = lineManagementFixed > 0 ? lineManagementFixed : (egi * managementPct);
+    const taxes = taxesFlat;
+    const reserves = reservesFlat;
+    const utilities = utilitiesFlat;
     const totalOpex = taxes + insurance + maintenance + management + reserves + utilities;
     const noi = egi - totalOpex;
     const capRate = purchasePrice ? noi / purchasePrice : 0;
@@ -155,11 +156,13 @@ function buildDCF(input) {
 
   const totalDistributions = cashflows.slice(1).reduce((a, b) => a + b, 0);
   const irrValue = irr(cashflows, 0.15);
-  const coc = equity > 0 ? years[0].cashFlow / equity : 0;
+  const cashLeftInDeal = num(input.cashLeftInDeal || input.cashRemainingAfterRefinance, 0);
+  const cocDenominator = cashLeftInDeal > 0 ? cashLeftInDeal : equity;
+  const coc = cocDenominator > 0 ? years[0].cashFlow / cocDenominator : 0;
   const multiple = equity > 0 ? totalDistributions / equity : 0;
 
   return {
-    assumptions: { purchasePrice, arv, grossIncome: startingGpr, vacancyRate, opex, ltv, interestRate, amortYears, holdYears, rentGrowth, expenseGrowth, exitCap, loanType, ioYears, totalCapitalInvested, totalProjectCost },
+    assumptions: { purchasePrice, arv, grossIncome: startingGpr, vacancyRate, opex, ltv, interestRate, amortYears, holdYears, rentGrowth, expenseGrowth, exitCap, loanType, ioYears, totalCapitalInvested, totalProjectCost, commonFees: commonFeesFlat, cashLeftInDeal: cashLeftInDeal || null, cocDenominator },
     equity,
     loanAmount,
     annualDebtService: years[0]?.debtService || 0,
@@ -1054,7 +1057,7 @@ export default function App() {
   const [exResult, setExResult] = useState(null);
   const [exFields, setExFields] = useState({});
   const [docCtx, setDocCtx] = useState("");
-  const [d, setD] = useState({ name: "", propertyType: "", market: "", address: "", source: "", units: "", yearBuilt: "", lotSize: "", sqft: "", description: "", askingPrice: "", offerPrice: "", pricePerUnit: "", pricePerSF: "", grossIncome: "", otherIncome: "", occupancy: "", marketRent: "", opex: "", taxes: "", insurance: "", capex: "", expenseMaintenance: "", expenseManagement: "", expenseReserves: "", expenseUtilities: "", constructionCosts: "", softCosts: "", constructionLoanAmount: "", constructionLoanTermMonths: "", constructionInterestRate: "", refiLoanAmount: "", refiLtv: "", refiRate: "", ltv: "", loanAmount: "", equityRaise: "", totalCapitalInvested: "", totalProjectCost: "", arv: "", monthlyRentPerUnit: "", loanType: "amortizing", ioYears: "", interestRate: "", amortizationYears: 30, rentGrowth: 3, expenseGrowth: 2.5, exitCapRate: 6.25, targetCoC: "", targetIRR: "", targetMultiple: "", holdPeriod: "", submarket: "", comps: "", businessPlan: "", knownRisks: "", additionalNotes: "" });
+  const [d, setD] = useState({ name: "", propertyType: "", market: "", address: "", source: "", units: "", yearBuilt: "", lotSize: "", sqft: "", description: "", askingPrice: "", offerPrice: "", pricePerUnit: "", pricePerSF: "", grossIncome: "", otherIncome: "", occupancy: "", marketRent: "", opex: "", taxes: "", insurance: "", capex: "", expenseMaintenance: "", expenseManagement: "", expenseReserves: "", expenseUtilities: "", constructionCosts: "", softCosts: "", constructionLoanAmount: "", constructionLoanTermMonths: "", constructionInterestRate: "", refiLoanAmount: "", refiLtv: "", refiRate: "", ltv: "", loanAmount: "", equityRaise: "", totalCapitalInvested: "", totalProjectCost: "", cashLeftInDeal: "", cashRemainingAfterRefinance: "", arv: "", monthlyRentPerUnit: "", loanType: "amortizing", ioYears: "", interestRate: "", amortizationYears: 30, rentGrowth: 3, expenseGrowth: 2.5, exitCapRate: 6.25, targetCoC: "", targetIRR: "", targetMultiple: "", holdPeriod: "", submarket: "", comps: "", businessPlan: "", knownRisks: "", additionalNotes: "" });
   const [analysis, setAnalysis] = useState(null);
   const [loading, setLoading] = useState(false);
   const [followUps, setFollowUps] = useState([]);
