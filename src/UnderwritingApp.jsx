@@ -29,6 +29,14 @@ function num(v, d = 0) {
   return Number.isFinite(n) ? n : d;
 }
 
+function rate(v, defaultDecimal) {
+  const n = num(v, defaultDecimal);
+  if (!Number.isFinite(n)) return defaultDecimal;
+  if (n > 1) return n / 100;
+  if (n < -1) return n / 100;
+  return n;
+}
+
 function pmt(rate, nper, pv) {
   if (!rate) return pv / nper;
   return (rate * pv) / (1 - Math.pow(1 + rate, -nper));
@@ -61,7 +69,10 @@ function buildDCF(input) {
   const gprFromUnits = units > 0 && monthlyRentPerUnit > 0 ? units * monthlyRentPerUnit * 12 : 0;
   const startingGpr = grossIncome || gprFromUnits;
 
-  const vacancyRate = num(input.occupancy) > 0 ? (100 - num(input.occupancy)) / 100 : Math.max(0, num(input.vacancyRate, 6) / 100);
+  const occ = num(input.occupancy, NaN);
+  const vacancyRate = Number.isFinite(occ)
+    ? (occ > 1 ? (100 - occ) / 100 : 1 - occ)
+    : Math.max(0, rate(input.vacancyRate, 0.06));
 
   const commonFees = num(input.commonFees, otherIncome);
   const lineTaxes = num(input.taxes, 0);
@@ -70,11 +81,11 @@ function buildDCF(input) {
   const lineManagementFixed = num(input.expenseManagement, 0);
   const lineReserves = num(input.expenseReserves, 0);
   const lineUtilities = num(input.expenseUtilities, 0);
-  const managementPct = num(input.managementPct, 2) / 100;
+  const managementPct = rate(input.managementPct, 0.02);
   const fallbackOpex = num(input.opex, 0) || (startingGpr + commonFees) * 0.42;
   const opex = fallbackOpex;
 
-  const ltv = num(input.ltv, 70) / 100;
+  const ltv = rate(input.ltv, 0.70);
   const explicitLoan = num(input.loanAmount, 0);
   const arvLoan = arv > 0 ? arv * ltv : 0;
   const purchaseLoan = purchasePrice * ltv;
@@ -85,13 +96,13 @@ function buildDCF(input) {
   const fallbackDerivedEquity = totalProjectCost > 0 ? Math.max(0, totalProjectCost - loanAmount) : Math.max(0, purchasePrice - loanAmount);
   const equity = explicitEquity > 0 ? explicitEquity : (totalCapitalInvested > 0 ? totalCapitalInvested : fallbackDerivedEquity);
 
-  const interestRate = num(input.interestRate, 7.25) / 100;
+  const interestRate = rate(input.interestRate, 0.0725);
   const amortYears = Math.max(1, num(input.amortizationYears, 30));
   const holdYears = 5;
-  const rentGrowth = num(input.rentGrowth, 3) / 100;
-  const expenseGrowth = num(input.expenseGrowth, 2.5) / 100;
-  const exitCap = num(input.exitCapRate, Math.max(4.5, num(input.targetCapRate, 6.25))) / 100;
-  const saleCommissionRate = num(input.saleCommissionRate, 2) / 100;
+  const rentGrowth = rate(input.rentGrowth, 0.03);
+  const expenseGrowth = rate(input.expenseGrowth, 0.025);
+  const exitCap = rate(input.exitCapRate, Math.max(0.045, rate(input.targetCapRate, 0.0625)));
+  const saleCommissionRate = rate(input.saleCommissionRate, 0.02);
   const loanType = String(input.loanType || (num(input.ioYears, 0) > 0 ? 'io' : 'amortizing')).toLowerCase();
   const ioYears = Math.max(0, num(input.ioYears, 0));
 
@@ -116,8 +127,8 @@ function buildDCF(input) {
   for (let y = 1; y <= holdYears; y++) {
     if (y > 1) {
       gpr *= 1 + rentGrowth;
-      insurance *= 1 + Math.max(0, num(input.insuranceGrowth, 5) / 100);
-      maintenance *= 1 + Math.max(0, num(input.maintenanceGrowth, 2) / 100);
+      insurance *= 1 + Math.max(0, rate(input.insuranceGrowth, 0.05));
+      maintenance *= 1 + Math.max(0, rate(input.maintenanceGrowth, 0.02));
     }
 
     const egi = gpr * (1 - vacancyRate) + commonFeesFlat;
@@ -156,8 +167,8 @@ function buildDCF(input) {
 
   const refiCashOut = num(input.refiCashOut, 0); // tracked at deal level, excluded from LP IRR series by convention
 
-  const lpPrefRate = num(input.lpPrefRate, 8) / 100;
-  const lpProfitShare = num(input.lpProfitShare, 45) / 100;
+  const lpPrefRate = rate(input.lpPrefRate, 0.08);
+  const lpProfitShare = rate(input.lpProfitShare, 0.45);
   const holdYearsPref = years.length;
   const annualLpPref = equity * lpPrefRate;
   const lpPrefTotal = annualLpPref * holdYearsPref;
@@ -217,8 +228,8 @@ function buildAuditReport(d, dcf) {
   const opex = num(d.opex);
   const expenseRatio = income > 0 ? opex / income : 0;
   const vacancy = 100 - num(d.occupancy, 94);
-  const ltv = num(d.ltv, 70);
-  const rate = num(d.interestRate, 7.25);
+  const ltv = rate(d.ltv, 0.70) * 100;
+  const debtRate = rate(d.interestRate, 0.0725) * 100;
 
   // Core underwriting checks
   add("Rent roll / income provided", income > 0 ? "pass" : "fail", income > 0 ? "Income fields present." : "Gross income missing.", "Financial");
@@ -226,7 +237,7 @@ function buildAuditReport(d, dcf) {
   add("Vacancy reasonableness", vacancy >= 2 && vacancy <= 15 ? "pass" : "warn", `Vacancy ${vacancy.toFixed(2)}%.`, "Market");
   add("Expense ratio range", expenseRatio >= 0.30 && expenseRatio <= 0.60 ? "pass" : "warn", `Expense ratio ${(expenseRatio * 100).toFixed(2)}%.`, "Financial");
   add("Debt LTV range", ltv >= 55 && ltv <= 80 ? "pass" : "warn", `LTV ${ltv.toFixed(2)}%.`, "Debt");
-  add("Interest rate range", rate >= 4 && rate <= 12 ? "pass" : "warn", `Interest ${rate.toFixed(2)}%.`, "Debt");
+  add("Interest rate range", debtRate >= 4 && debtRate <= 12 ? "pass" : "warn", `Interest ${debtRate.toFixed(2)}%.`, "Debt");
   add("Debt coverage Year 1", dcf.years[0].dscr >= 1.20 ? "pass" : dcf.years[0].dscr >= 1.05 ? "warn" : "fail", `DSCR ${dcf.years[0].dscr.toFixed(2)}x.`, "Debt");
   add("Cash-on-cash positive", dcf.cashOnCash > 0 ? "pass" : "fail", `CoC ${(dcf.cashOnCash * 100).toFixed(2)}%.`, "Returns");
   add("IRR target alignment", dcf.irr >= (num(d.targetIRR, 12) / 100) ? "pass" : "warn", `IRR ${(dcf.irr * 100).toFixed(2)}% vs target ${num(d.targetIRR, 12).toFixed(2)}%.`, "Returns");
@@ -612,7 +623,7 @@ function ProFormaSummary({ dcf, sensitivity, onSensitivityChange }) {
     <div style={{ background: B.bg, border: `1px solid ${B.bd}`, borderRadius: 10, padding: 10 }}>
       <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: B.td, marginBottom: 6 }}>
         <span>{label}</span>
-        <span style={{ color: B.a }}>{Number(sensitivity[keyName]).toFixed(2)}{suffix}</span>
+        <span style={{ color: B.a }}>{(Number(sensitivity[keyName]) * 100).toFixed(2)}{suffix}</span>
       </div>
       <input
         type="range"
@@ -638,11 +649,11 @@ function ProFormaSummary({ dcf, sensitivity, onSensitivityChange }) {
 
       {sensitivity && onSensitivityChange && (
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 14 }}>
-          <Slider label="Vacancy Rate" keyName="vacancyRate" min={0} max={25} step={0.25} />
-          <Slider label="Rent Growth" keyName="rentGrowth" min={-2} max={10} step={0.25} />
-          <Slider label="Expense Growth" keyName="expenseGrowth" min={0} max={10} step={0.25} />
-          <Slider label="Exit Cap Rate" keyName="exitCapRate" min={3} max={10} step={0.1} />
-          <Slider label="Interest Rate" keyName="interestRate" min={3} max={14} step={0.1} />
+          <Slider label="Vacancy Rate" keyName="vacancyRate" min={0} max={0.25} step={0.0025} />
+          <Slider label="Rent Growth" keyName="rentGrowth" min={-0.02} max={0.10} step={0.0025} />
+          <Slider label="Expense Growth" keyName="expenseGrowth" min={0} max={0.10} step={0.0025} />
+          <Slider label="Exit Cap Rate" keyName="exitCapRate" min={0.03} max={0.10} step={0.001} />
+          <Slider label="Interest Rate" keyName="interestRate" min={0.03} max={0.14} step={0.001} />
         </div>
       )}
 
@@ -761,7 +772,7 @@ function AnalysisStep({ d, dcf, auditReport, sensitivity, onSensitivityChange, l
     autoTable(doc, {
       startY: nextY,
       head: [["Vacancy", "Rent Growth", "Expense Growth", "Exit Cap", "Interest Rate"]],
-      body: [[`${Number(sensitivity.vacancyRate).toFixed(2)}%`, `${Number(sensitivity.rentGrowth).toFixed(2)}%`, `${Number(sensitivity.expenseGrowth).toFixed(2)}%`, `${Number(sensitivity.exitCapRate).toFixed(2)}%`, `${Number(sensitivity.interestRate).toFixed(2)}%`]],
+      body: [[`${(Number(sensitivity.vacancyRate)*100).toFixed(2)}%`, `${(Number(sensitivity.rentGrowth)*100).toFixed(2)}%`, `${(Number(sensitivity.expenseGrowth)*100).toFixed(2)}%`, `${(Number(sensitivity.exitCapRate)*100).toFixed(2)}%`, `${(Number(sensitivity.interestRate)*100).toFixed(2)}%`]],
       styles: { fontSize: 9 },
       headStyles: { fillColor: [39, 39, 42] },
     });
@@ -868,7 +879,7 @@ function AnalysisStep({ d, dcf, auditReport, sensitivity, onSensitivityChange, l
     vacScenarios.forEach((v) => {
       const row = [`${(v * 100).toFixed(1)}%`];
       rentScenarios.forEach((r) => {
-        const dcfAlt = buildDCF({ ...dcfInput, occupancy: (1 - v) * 100, rentGrowth: r * 100, exitCapRate: num(sensitivity.exitCapRate, 6.25) });
+        const dcfAlt = buildDCF({ ...dcfInput, vacancyRate: v, rentGrowth: r, exitCapRate: num(sensitivity.exitCapRate, 0.0625) });
         row.push(dcfAlt?.irr ?? null);
       });
       sensRows.push(row);
@@ -1085,11 +1096,11 @@ export default function App() {
   const [credits, setCredits] = useState(null);
   const [creditError, setCreditError] = useState("");
   const [sensitivity, setSensitivity] = useState({
-    vacancyRate: 6,
-    rentGrowth: 3,
-    expenseGrowth: 2.5,
-    exitCapRate: 6.25,
-    interestRate: 7.25,
+    vacancyRate: 0.06,
+    rentGrowth: 0.03,
+    expenseGrowth: 0.025,
+    exitCapRate: 0.0625,
+    interestRate: 0.0725,
   });
   const [loi, setLoi] = useState({
     purchaser: "",
@@ -1102,21 +1113,21 @@ export default function App() {
   useEffect(() => {
     setSensitivity(prev => ({
       ...prev,
-      vacancyRate: num(d.occupancy) > 0 ? (100 - num(d.occupancy)) : prev.vacancyRate,
-      rentGrowth: num(d.rentGrowth, prev.rentGrowth),
-      expenseGrowth: num(d.expenseGrowth, prev.expenseGrowth),
-      exitCapRate: num(d.exitCapRate, prev.exitCapRate),
-      interestRate: num(d.interestRate, prev.interestRate),
+      vacancyRate: num(d.occupancy) > 0 ? (num(d.occupancy) > 1 ? (100 - num(d.occupancy)) / 100 : 1 - num(d.occupancy)) : prev.vacancyRate,
+      rentGrowth: rate(d.rentGrowth, prev.rentGrowth),
+      expenseGrowth: rate(d.expenseGrowth, prev.expenseGrowth),
+      exitCapRate: rate(d.exitCapRate, prev.exitCapRate),
+      interestRate: rate(d.interestRate, prev.interestRate),
     }));
   }, [d.occupancy, d.rentGrowth, d.expenseGrowth, d.exitCapRate, d.interestRate]);
 
   const dcfInput = useMemo(() => ({
     ...d,
-    occupancy: 100 - num(sensitivity.vacancyRate, 6),
-    rentGrowth: num(sensitivity.rentGrowth, 3),
-    expenseGrowth: num(sensitivity.expenseGrowth, 2.5),
-    exitCapRate: num(sensitivity.exitCapRate, 6.25),
-    interestRate: num(sensitivity.interestRate, 7.25),
+    vacancyRate: num(sensitivity.vacancyRate, 0.06),
+    rentGrowth: num(sensitivity.rentGrowth, 0.03),
+    expenseGrowth: num(sensitivity.expenseGrowth, 0.025),
+    exitCapRate: num(sensitivity.exitCapRate, 0.0625),
+    interestRate: num(sensitivity.interestRate, 0.0725),
   }), [d, sensitivity]);
 
   const dcf = useMemo(() => buildDCF(dcfInput), [dcfInput]);
