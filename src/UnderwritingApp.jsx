@@ -53,29 +53,58 @@ function irr(cashflows, guess = 0.15) {
 
 function buildDCF(input) {
   const purchasePrice = num(input.askingPrice || input.offerPrice, 0);
+  const arv = num(input.arv, 0);
   const grossIncome = num(input.grossIncome, 0);
   const otherIncome = num(input.otherIncome, 0);
-  const vacancyRate = num(input.occupancy) > 0 ? (100 - num(input.occupancy)) / 100 : 0.06;
-  const opex = num(input.opex, 0) || (grossIncome + otherIncome) * 0.42;
+  const units = Math.max(0, num(input.units, 0));
+  const monthlyRentPerUnit = num(input.monthlyRentPerUnit, 0);
+  const gprFromUnits = units > 0 && monthlyRentPerUnit > 0 ? units * monthlyRentPerUnit * 12 : 0;
+  const startingGpr = grossIncome || gprFromUnits;
+
+  const vacancyRate = num(input.occupancy) > 0 ? (100 - num(input.occupancy)) / 100 : Math.max(0, num(input.vacancyRate, 6) / 100);
+
+  const lineTaxes = num(input.taxes, 0);
+  const lineInsurance = num(input.insurance, 0);
+  const lineMaintenance = num(input.expenseMaintenance, 0);
+  const lineManagement = num(input.expenseManagement, 0);
+  const lineReserves = num(input.expenseReserves, 0);
+  const lineUtilities = num(input.expenseUtilities, 0);
+  const lineOpex = lineTaxes + lineInsurance + lineMaintenance + lineManagement + lineReserves + lineUtilities;
+  const fallbackOpex = num(input.opex, 0) || (startingGpr + otherIncome) * 0.42;
+  const opex = lineOpex > 0 ? lineOpex : fallbackOpex;
+
   const ltv = num(input.ltv, 70) / 100;
+  const explicitLoan = num(input.loanAmount, 0);
+  const arvLoan = arv > 0 ? arv * ltv : 0;
+  const purchaseLoan = purchasePrice * ltv;
+  const loanAmount = explicitLoan > 0 ? explicitLoan : (arvLoan > 0 ? arvLoan : purchaseLoan);
+  const explicitEquity = num(input.equityRaise, 0);
+  const equity = explicitEquity > 0 ? explicitEquity : Math.max(0, purchasePrice - loanAmount);
+
   const interestRate = num(input.interestRate, 7.25) / 100;
-  const amortYears = num(input.amortizationYears, 30);
-  const holdYears = Math.max(1, Math.min(10, num(input.holdPeriod, 5)));
+  const amortYears = Math.max(1, num(input.amortizationYears, 30));
+  const holdYears = 5;
   const rentGrowth = num(input.rentGrowth, 3) / 100;
   const expenseGrowth = num(input.expenseGrowth, 2.5) / 100;
   const exitCap = num(input.exitCapRate, Math.max(4.5, num(input.targetCapRate, 6.25))) / 100;
+  const saleCommissionRate = num(input.saleCommissionRate, 2) / 100;
+  const loanType = String(input.loanType || (num(input.ioYears, 0) > 0 ? 'io' : 'amortizing')).toLowerCase();
+  const ioYears = Math.max(0, num(input.ioYears, 0));
 
-  if (!purchasePrice || !grossIncome) return null;
+  if (!purchasePrice || !startingGpr || !loanAmount) return null;
 
-  const loanAmount = purchasePrice * ltv;
-  const equity = purchasePrice - loanAmount;
   const monthlyRate = interestRate / 12;
   const nper = amortYears * 12;
-  const annualDebtService = pmt(monthlyRate, nper, loanAmount) * 12;
+  const amortizingPaymentMonthly = pmt(monthlyRate, nper, loanAmount);
 
   let debtBalance = loanAmount;
-  let gpr = grossIncome;
-  let opexYear = opex;
+  let gpr = startingGpr;
+  let taxes = lineTaxes || (opex * 0.28);
+  let insurance = lineInsurance || (opex * 0.12);
+  let maintenance = lineMaintenance || (opex * 0.22);
+  let management = lineManagement || (opex * 0.16);
+  let reserves = lineReserves || (opex * 0.10);
+  let utilities = lineUtilities || (opex * 0.12);
 
   const years = [];
   const cashflows = [-equity];
@@ -83,18 +112,25 @@ function buildDCF(input) {
   for (let y = 1; y <= holdYears; y++) {
     if (y > 1) {
       gpr *= 1 + rentGrowth;
-      opexYear *= 1 + expenseGrowth;
+      taxes *= 1 + expenseGrowth;
+      insurance *= 1 + expenseGrowth;
+      maintenance *= 1 + expenseGrowth;
+      management *= 1 + expenseGrowth;
+      reserves *= 1 + expenseGrowth;
+      utilities *= 1 + expenseGrowth;
     }
 
     const egi = gpr * (1 - vacancyRate) + otherIncome;
-    const noi = egi - opexYear;
+    const totalOpex = taxes + insurance + maintenance + management + reserves + utilities;
+    const noi = egi - totalOpex;
     const capRate = purchasePrice ? noi / purchasePrice : 0;
 
     let interestPaid = 0;
     let principalPaid = 0;
     for (let m = 0; m < 12; m++) {
       const interest = debtBalance * monthlyRate;
-      const principal = Math.max(0, (annualDebtService / 12) - interest);
+      const ioPeriod = loanType === 'io' && y <= ioYears;
+      const principal = ioPeriod ? 0 : Math.max(0, amortizingPaymentMonthly - interest);
       interestPaid += interest;
       principalPaid += principal;
       debtBalance = Math.max(0, debtBalance - principal);
@@ -104,13 +140,14 @@ function buildDCF(input) {
     const cashFlow = noi - debtService;
     const dscr = debtService > 0 ? noi / debtService : 0;
 
-    years.push({ year: y, gpr, egi, opex: opexYear, noi, debtService, cashFlow, dscr, capRate, debtBalance });
+    years.push({ year: y, gpr, egi, taxes, insurance, maintenance, management, reserves, utilities, opex: totalOpex, noi, debtService, cashFlow, dscr, capRate, debtBalance });
     cashflows.push(cashFlow);
   }
 
-  const terminalNoi = years[years.length - 1].noi * (1 + rentGrowth);
-  const salePrice = exitCap > 0 ? terminalNoi / exitCap : purchasePrice;
-  const netSale = salePrice - debtBalance;
+  const year5Noi = years[years.length - 1].noi;
+  const grossSale = exitCap > 0 ? year5Noi / exitCap : purchasePrice;
+  const saleCommission = grossSale * saleCommissionRate;
+  const netSale = grossSale - saleCommission - debtBalance;
   cashflows[cashflows.length - 1] += netSale;
 
   const totalDistributions = cashflows.slice(1).reduce((a, b) => a + b, 0);
@@ -119,16 +156,23 @@ function buildDCF(input) {
   const multiple = equity > 0 ? totalDistributions / equity : 0;
 
   return {
-    assumptions: { purchasePrice, grossIncome, vacancyRate, opex, ltv, interestRate, amortYears, holdYears, rentGrowth, expenseGrowth, exitCap },
+    assumptions: { purchasePrice, arv, grossIncome: startingGpr, vacancyRate, opex, ltv, interestRate, amortYears, holdYears, rentGrowth, expenseGrowth, exitCap, loanType, ioYears },
     equity,
     loanAmount,
-    annualDebtService,
-    salePrice,
+    annualDebtService: years[0]?.debtService || 0,
+    salePrice: grossSale,
+    saleCommission,
     netSale,
     irr: irrValue,
     cashOnCash: coc,
     equityMultiple: multiple,
+    cashflows,
     years,
+    flags: {
+      usedExplicitLoan: explicitLoan > 0,
+      usedArvLoan: explicitLoan <= 0 && arvLoan > 0,
+      derivedEquity: !(explicitEquity > 0),
+    }
   };
 }
 
@@ -204,6 +248,11 @@ function buildAuditReport(d, dcf) {
     add(`Year ${y.year} expense growth assumption realistic`, dcf.assumptions.expenseGrowth <= 0.08 ? "pass" : "warn", `Expense growth ${(dcf.assumptions.expenseGrowth * 100).toFixed(2)}%`, "Market");
     add(`Year ${y.year} exit cap assumption realistic`, dcf.assumptions.exitCap >= 0.045 && dcf.assumptions.exitCap <= 0.12 ? "pass" : "warn", `Exit cap ${(dcf.assumptions.exitCap * 100).toFixed(2)}%`, "Valuation");
   });
+
+  add("Anomaly: IRR <= 40%", dcf.irr <= 0.40 ? "pass" : "warn", `IRR ${(dcf.irr * 100).toFixed(2)}%.`, "Anomaly");
+  add("Anomaly: DSCR range sanity", dcf.years[0].dscr >= 0.8 && dcf.years[0].dscr <= 2.0 ? "pass" : "warn", `Year 1 DSCR ${dcf.years[0].dscr.toFixed(2)}x.`, "Anomaly");
+  add("Anomaly: 5-year cash flow generated", dcf.years.length === 5 ? "pass" : "fail", `Generated ${dcf.years.length} years.`, "Anomaly");
+  add("Anomaly: equity source", dcf.flags?.derivedEquity ? "warn" : "pass", dcf.flags?.derivedEquity ? "Equity appears derived, verify source docs." : "Equity extracted from source.", "Anomaly");
 
   // risk score
   const failCount = checks.filter(c => c.status === "fail").length;
@@ -748,11 +797,14 @@ function AnalysisStep({ d, dcf, auditReport, sensitivity, onSensitivityChange, l
   function exportExcel() {
     if (!dcf) return;
     const wb = XLSX.utils.book_new();
+
     const summary = [
       ["ProformAI Pro Forma Summary"],
       ["Deal", d.name || ""],
       ["Market", d.market || ""],
+      ["Property Type", d.propertyType || ""],
       ["Purchase Price", dcf.assumptions.purchasePrice],
+      ["ARV", dcf.assumptions.arv || ""],
       ["Loan Amount", dcf.loanAmount],
       ["Equity", dcf.equity],
       ["IRR", dcf.irr],
@@ -762,21 +814,37 @@ function AnalysisStep({ d, dcf, auditReport, sensitivity, onSensitivityChange, l
     ];
     const wsSummary = XLSX.utils.aoa_to_sheet(summary);
 
-    const cashRows = [["Year", "GPR", "EGI", "Opex", "NOI", "Debt Service", "Cash Flow", "DSCR", "Cap Rate"]];
-    dcf.years.forEach(y => cashRows.push([y.year, y.gpr, y.egi, y.opex, y.noi, y.debtService, y.cashFlow, y.dscr, y.capRate]));
+    const cashRows = [["Line Item", "Year 1", "Year 2", "Year 3", "Year 4", "Year 5"]];
+    const pushLine = (label, fn) => cashRows.push([label, ...dcf.years.map(fn)]);
+    pushLine("GPR", y => y.gpr);
+    cashRows.push(["Vacancy", "=B2*Assumptions!B4", "=C2*Assumptions!B4", "=D2*Assumptions!B4", "=E2*Assumptions!B4", "=F2*Assumptions!B4"]);
+    pushLine("EGI", y => y.egi);
+    pushLine("Taxes", y => y.taxes || 0);
+    pushLine("Insurance", y => y.insurance || 0);
+    pushLine("Maintenance", y => y.maintenance || 0);
+    pushLine("Management", y => y.management || 0);
+    pushLine("Reserves", y => y.reserves || 0);
+    pushLine("Utilities", y => y.utilities || 0);
+    pushLine("Total Opex", y => y.opex);
+    pushLine("NOI", y => y.noi);
+    pushLine("Debt Service", y => y.debtService);
+    pushLine("Cash Flow", y => y.cashFlow);
+    pushLine("DSCR", y => y.dscr);
+    pushLine("Cap Rate", y => y.capRate);
+    pushLine("CoC", y => dcf.equity > 0 ? y.cashFlow / dcf.equity : 0);
     const wsCash = XLSX.utils.aoa_to_sheet(cashRows);
 
-    const sensRows = [
-      ["Variable", "Value"],
-      ["Vacancy Rate", sensitivity.vacancyRate],
-      ["Rent Growth", sensitivity.rentGrowth],
-      ["Expense Growth", sensitivity.expenseGrowth],
-      ["Exit Cap Rate", sensitivity.exitCapRate],
-      ["Interest Rate", sensitivity.interestRate],
-      ["IRR", dcf.irr],
-      ["Cash-on-Cash", dcf.cashOnCash],
-      ["Equity Multiple", dcf.equityMultiple],
-    ];
+    const sensRows = [["Vacancy\Rent Growth", "2%", "3%", "4%"]];
+    const vacScenarios = [0.04, 0.06, 0.08];
+    const rentScenarios = [0.02, 0.03, 0.04];
+    vacScenarios.forEach((v) => {
+      const row = [`${(v * 100).toFixed(1)}%`];
+      rentScenarios.forEach((r) => {
+        const dcfAlt = buildDCF({ ...dcfInput, occupancy: (1 - v) * 100, rentGrowth: r * 100, exitCapRate: num(sensitivity.exitCapRate, 6.25) });
+        row.push(dcfAlt?.irr ?? null);
+      });
+      sensRows.push(row);
+    });
     const wsSens = XLSX.utils.aoa_to_sheet(sensRows);
 
     const asmpRows = [
@@ -784,7 +852,13 @@ function AnalysisStep({ d, dcf, auditReport, sensitivity, onSensitivityChange, l
       ["Purchase Price", dcf.assumptions.purchasePrice],
       ["Gross Income", dcf.assumptions.grossIncome],
       ["Vacancy Rate", dcf.assumptions.vacancyRate],
-      ["Opex", dcf.assumptions.opex],
+      ["Taxes", dcf.years[0]?.taxes || 0],
+      ["Insurance", dcf.years[0]?.insurance || 0],
+      ["Maintenance", dcf.years[0]?.maintenance || 0],
+      ["Management", dcf.years[0]?.management || 0],
+      ["Reserves", dcf.years[0]?.reserves || 0],
+      ["Utilities", dcf.years[0]?.utilities || 0],
+      ["Loan Amount", dcf.loanAmount],
       ["LTV", dcf.assumptions.ltv],
       ["Interest", dcf.assumptions.interestRate],
       ["Amortization Years", dcf.assumptions.amortYears],
@@ -792,14 +866,10 @@ function AnalysisStep({ d, dcf, auditReport, sensitivity, onSensitivityChange, l
       ["Rent Growth", dcf.assumptions.rentGrowth],
       ["Expense Growth", dcf.assumptions.expenseGrowth],
       ["Exit Cap", dcf.assumptions.exitCap],
+      ["Loan Type", dcf.assumptions.loanType],
+      ["IO Years", dcf.assumptions.ioYears],
     ];
     const wsAsmp = XLSX.utils.aoa_to_sheet(asmpRows);
-
-    // Add a few formulas for editability
-    wsCash["J1"] = { t: "s", v: "NOI Margin" };
-    for (let r = 2; r <= dcf.years.length + 1; r++) {
-      wsCash[`J${r}`] = { t: "n", f: `IF(C${r}=0,0,E${r}/C${r})` };
-    }
 
     XLSX.utils.book_append_sheet(wb, wsSummary, "Summary");
     XLSX.utils.book_append_sheet(wb, wsCash, "Cash Flows");
@@ -972,6 +1042,7 @@ Return EXACTLY this JSON (6-12 metrics, 3-8 missing/flags/questions, 15-25 DD it
 /* ═══ MAIN APP ═══ */
 export default function App() {
   const { getToken } = useAuth();
+  const isTestMode = String(import.meta.env.VITE_TEST_MODE || "").toLowerCase() === "true";
   const [step, setStep] = useState(0);
   const [files, setFiles] = useState([]);
   const [extracting, setExtracting] = useState(false);
@@ -979,7 +1050,7 @@ export default function App() {
   const [exResult, setExResult] = useState(null);
   const [exFields, setExFields] = useState({});
   const [docCtx, setDocCtx] = useState("");
-  const [d, setD] = useState({ name: "", propertyType: "", market: "", address: "", source: "", units: "", yearBuilt: "", lotSize: "", sqft: "", description: "", askingPrice: "", offerPrice: "", pricePerUnit: "", pricePerSF: "", grossIncome: "", otherIncome: "", occupancy: "", marketRent: "", opex: "", taxes: "", insurance: "", capex: "", ltv: "", interestRate: "", amortizationYears: 30, rentGrowth: 3, expenseGrowth: 2.5, exitCapRate: 6.25, targetCoC: "", targetIRR: "", targetMultiple: "", holdPeriod: "", submarket: "", comps: "", businessPlan: "", knownRisks: "", additionalNotes: "" });
+  const [d, setD] = useState({ name: "", propertyType: "", market: "", address: "", source: "", units: "", yearBuilt: "", lotSize: "", sqft: "", description: "", askingPrice: "", offerPrice: "", pricePerUnit: "", pricePerSF: "", grossIncome: "", otherIncome: "", occupancy: "", marketRent: "", opex: "", taxes: "", insurance: "", capex: "", expenseMaintenance: "", expenseManagement: "", expenseReserves: "", expenseUtilities: "", constructionCosts: "", softCosts: "", constructionLoanAmount: "", constructionLoanTermMonths: "", constructionInterestRate: "", refiLoanAmount: "", refiLtv: "", refiRate: "", ltv: "", loanAmount: "", equityRaise: "", arv: "", monthlyRentPerUnit: "", loanType: "amortizing", ioYears: "", interestRate: "", amortizationYears: 30, rentGrowth: 3, expenseGrowth: 2.5, exitCapRate: 6.25, targetCoC: "", targetIRR: "", targetMultiple: "", holdPeriod: "", submarket: "", comps: "", businessPlan: "", knownRisks: "", additionalNotes: "" });
   const [analysis, setAnalysis] = useState(null);
   const [loading, setLoading] = useState(false);
   const [followUps, setFollowUps] = useState([]);
@@ -1026,9 +1097,9 @@ export default function App() {
   async function loadCredits() {
     try {
       setCreditError("");
-      const token = await getToken();
+      const token = isTestMode ? null : await getToken();
       const res = await fetch("/api/credits", {
-        headers: { Authorization: `Bearer ${token}` },
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || "Failed to load credits");
@@ -1046,7 +1117,7 @@ export default function App() {
     setExtracting(true);
     setExtractProgress(5);
     try {
-      const token = await getToken();
+      const token = isTestMode ? null : await getToken();
       const uploadFiles = [];
       let progress = 10;
 
@@ -1062,7 +1133,7 @@ export default function App() {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
         body: JSON.stringify({ files: uploadFiles }),
       });
@@ -1110,12 +1181,12 @@ export default function App() {
     setLoading(true); setAnalysis(null); setFollowUps([]);
     try {
       setCreditError("");
-      const token = await getToken();
+      const token = isTestMode ? null : await getToken();
       const resp = await fetch("/api/analyze", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
         body: JSON.stringify({ model: "claude-sonnet-4-20250514", max_tokens: 4000, messages: [{ role: "user", content: buildPrompt(d, docCtx) }] })
       });

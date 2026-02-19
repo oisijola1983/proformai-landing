@@ -1,5 +1,6 @@
 import { createClerkClient } from "@clerk/backend";
 import { requireAuth } from "./_lib/auth.js";
+import { isTestMode, getTestCredits, setTestCredits } from "./_lib/testMode.js";
 import XLSX from "xlsx";
 
 const clerkClient = createClerkClient({ secretKey: process.env.CLERK_SECRET_KEY });
@@ -29,6 +30,49 @@ function spreadsheetToText(file) {
   return chunks.join("\n\n").slice(0, 50000);
 }
 
+function quickExtractFromCsv(files) {
+  const out = {};
+  for (const f of files) {
+    if (f.mimeType !== "text/csv") continue;
+    const text = Buffer.from(f.data, "base64").toString("utf8");
+    for (const line of text.split(/\r?\n/)) {
+      const [k, ...rest] = line.split(",");
+      const key = (k || "").trim().toLowerCase();
+      const val = rest.join(",").trim();
+      if (!key || !val) continue;
+      if (key.includes("deal name")) out.name = val;
+      if (key.includes("address")) out.address = val;
+      if (key.includes("units")) out.units = Number(val);
+      if (key.includes("year built")) out.yearBuilt = Number(val);
+      if (key.includes("square feet")) out.sqft = Number(val);
+      if (key.includes("asking price")) out.askingPrice = Number(val);
+      if (key.includes("gross income")) out.grossIncome = Number(val);
+      if (key.includes("other income")) out.otherIncome = Number(val);
+      if (key.includes("occupancy")) out.occupancy = Number(val);
+      if (key.includes("operating expenses")) out.opex = Number(val);
+      if (key === "taxes" || key.includes("property tax")) out.taxes = Number(val);
+      if (key.includes("insurance")) out.insurance = Number(val);
+      if (key.includes("maintenance")) out.expenseMaintenance = Number(val);
+      if (key.includes("management")) out.expenseManagement = Number(val);
+      if (key.includes("reserves")) out.expenseReserves = Number(val);
+      if (key.includes("utilities")) out.expenseUtilities = Number(val);
+      if (key.includes("capex") || key.includes("construction cost")) out.capex = Number(val);
+      if (key.includes("arv") || key.includes("after repair value")) out.arv = Number(val);
+      if (key.includes("loan amount")) out.loanAmount = Number(val);
+      if (key.includes("equity raise") || key.includes("equity amount")) out.equityRaise = Number(val);
+      if (key === "ltv") out.ltv = Number(val);
+      if (key.includes("interest rate")) out.interestRate = Number(val);
+      if (key.includes("amortization")) out.amortizationYears = Number(val);
+      if (key.includes("exit cap")) out.exitCapRate = Number(val);
+      if (key.includes("rent growth")) out.rentGrowth = Number(val);
+      if (key.includes("expense growth")) out.expenseGrowth = Number(val);
+    }
+  }
+  out.market = out.address?.includes("Houston") ? "Houston, TX" : null;
+  out.summary = "Test-mode extraction generated from uploaded CSV.";
+  return out;
+}
+
 async function callAnthropic(parts) {
   const response = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
@@ -53,8 +97,9 @@ export default async function handler(req, res) {
 
   try {
     const { clerkUserId } = await requireAuth(req);
-    const user = await clerkClient.users.getUser(clerkUserId);
-    const credits = Number(user.privateMetadata?.credits ?? process.env.STARTER_CREDITS ?? 0);
+    const testMode = isTestMode();
+    const user = testMode ? null : await clerkClient.users.getUser(clerkUserId);
+    const credits = testMode ? getTestCredits() : Number(user.privateMetadata?.credits ?? process.env.STARTER_CREDITS ?? 0);
     if (credits <= 0) return res.status(402).json({ error: "No credits remaining", credits: 0 });
 
     const files = Array.isArray(req.body?.files) ? req.body.files : [];
@@ -78,21 +123,27 @@ export default async function handler(req, res) {
 
     parts.push({
       type: "text",
-      text: `Extract underwriting data from these broker package files. Return ONLY JSON with keys: {"name","propertyType","market","address","units","yearBuilt","lotSize","sqft","description","askingPrice","pricePerUnit","pricePerSF","grossIncome","otherIncome","occupancy","marketRent","opex","taxes","insurance","capex","submarket","comps","knownRisks","ltv","interestRate","holdPeriod","targetIRR","targetCoC","summary"}. Include debt terms, vacancy, cap rate notes in summary if found. Use null when unknown.`
+      text: `Extract underwriting data from these broker package files. Return ONLY JSON. Prioritize explicit values from documents over calculated defaults.
+Required keys: {"name","propertyType","market","submarket","address","units","sqft","monthlyRentPerUnit","yearBuilt","askingPrice","offerPrice","arv","loanAmount","equityRaise","constructionCosts","softCosts","constructionLoanAmount","constructionLoanTermMonths","constructionInterestRate","refiLoanAmount","refiLtv","refiRate","loanType","ioYears","grossIncome","otherIncome","occupancy","opex","taxes","insurance","expenseMaintenance","expenseManagement","expenseReserves","expenseUtilities","capex","ltv","interestRate","amortizationYears","holdPeriod","rentGrowth","expenseGrowth","exitCapRate","targetIRR","targetCoC","summary"}.
+Rules: If source has explicit loan/equity/ARV/line-items, use them. Only estimate when missing. For loan amount priority use: explicit loan amount > ARV*LTV > purchase price*LTV. Use null when unknown.`
     });
 
-    const data = await callAnthropic(parts);
-    const raw = (data.content || []).map(c => c.text || "").join("\n");
-    const extracted = safeJsonParse(raw);
+    const extracted = testMode
+      ? quickExtractFromCsv(files)
+      : safeJsonParse((await callAnthropic(parts)).content?.map(c => c.text || "").join("\n"));
 
     const nextCredits = Math.max(0, credits - 1);
-    await clerkClient.users.updateUserMetadata(clerkUserId, {
-      privateMetadata: {
-        ...(user.privateMetadata || {}),
-        credits: nextCredits,
-        lastExtractionAt: new Date().toISOString(),
-      },
-    });
+    if (testMode) {
+      setTestCredits(nextCredits);
+    } else {
+      await clerkClient.users.updateUserMetadata(clerkUserId, {
+        privateMetadata: {
+          ...(user.privateMetadata || {}),
+          credits: nextCredits,
+          lastExtractionAt: new Date().toISOString(),
+        },
+      });
+    }
 
     return res.status(200).json({ extracted, creditsRemaining: nextCredits });
   } catch (error) {
