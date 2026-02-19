@@ -154,15 +154,28 @@ function buildDCF(input) {
   const netSale = grossSale - saleCommission - debtBalance;
   cashflows[cashflows.length - 1] += netSale;
 
+  const refiCashOut = num(input.refiCashOut, 0);
+  if (refiCashOut > 0) {
+    cashflows[0] += refiCashOut; // treat as immediate return at stabilization/refi
+  }
+
+  const lpPrefRate = num(input.lpPrefRate, 0) / 100;
+  const lpProfitShare = num(input.lpProfitShare, 0) / 100;
+  const holdYearsPref = years.length;
+  const lpPrefTotal = lpPrefRate > 0 ? equity * lpPrefRate * holdYearsPref : 0;
+  const exitProfit = Math.max(0, netSale);
+  const lpExitShare = lpProfitShare > 0 ? exitProfit * lpProfitShare : 0;
+  const lpExitPayout = lpPrefTotal + lpExitShare + (equity > 0 ? equity : 0);
+
   const totalDistributions = cashflows.slice(1).reduce((a, b) => a + b, 0);
   const irrValue = irr(cashflows, 0.15);
   const cashLeftInDeal = num(input.cashLeftInDeal || input.cashRemainingAfterRefinance, 0);
   const cocDenominator = cashLeftInDeal > 0 ? cashLeftInDeal : equity;
   const coc = cocDenominator > 0 ? years[0].cashFlow / cocDenominator : 0;
-  const multiple = equity > 0 ? totalDistributions / equity : 0;
+  const multiple = equity > 0 ? ((lpExitPayout > 0 ? lpExitPayout : totalDistributions) / equity) : 0;
 
   return {
-    assumptions: { purchasePrice, arv, grossIncome: startingGpr, vacancyRate, opex, ltv, interestRate, amortYears, holdYears, rentGrowth, expenseGrowth, exitCap, loanType, ioYears, totalCapitalInvested, totalProjectCost, commonFees: commonFeesFlat, cashLeftInDeal: cashLeftInDeal || null, cocDenominator },
+    assumptions: { purchasePrice, arv, grossIncome: startingGpr, vacancyRate, opex, ltv, interestRate, amortYears, holdYears, rentGrowth, expenseGrowth, exitCap, loanType, ioYears, totalCapitalInvested, totalProjectCost, commonFees: commonFeesFlat, cashLeftInDeal: cashLeftInDeal || null, cocDenominator, refiCashOut, lpPrefRate, lpProfitShare },
     equity,
     loanAmount,
     annualDebtService: years[0]?.debtService || 0,
@@ -173,6 +186,9 @@ function buildDCF(input) {
     cashOnCash: coc,
     equityMultiple: multiple,
     cashflows,
+    lpExitPayout,
+    lpPrefTotal,
+    lpExitShare,
     years,
     flags: {
       usedExplicitLoan: explicitLoan > 0,
@@ -1057,7 +1073,7 @@ export default function App() {
   const [exResult, setExResult] = useState(null);
   const [exFields, setExFields] = useState({});
   const [docCtx, setDocCtx] = useState("");
-  const [d, setD] = useState({ name: "", propertyType: "", market: "", address: "", source: "", units: "", yearBuilt: "", lotSize: "", sqft: "", description: "", askingPrice: "", offerPrice: "", pricePerUnit: "", pricePerSF: "", grossIncome: "", otherIncome: "", occupancy: "", marketRent: "", opex: "", taxes: "", insurance: "", capex: "", expenseMaintenance: "", expenseManagement: "", expenseReserves: "", expenseUtilities: "", constructionCosts: "", softCosts: "", constructionLoanAmount: "", constructionLoanTermMonths: "", constructionInterestRate: "", refiLoanAmount: "", refiLtv: "", refiRate: "", ltv: "", loanAmount: "", equityRaise: "", totalCapitalInvested: "", totalProjectCost: "", cashLeftInDeal: "", cashRemainingAfterRefinance: "", arv: "", monthlyRentPerUnit: "", loanType: "amortizing", ioYears: "", interestRate: "", amortizationYears: 30, rentGrowth: 3, expenseGrowth: 2.5, exitCapRate: 6.25, targetCoC: "", targetIRR: "", targetMultiple: "", holdPeriod: "", submarket: "", comps: "", businessPlan: "", knownRisks: "", additionalNotes: "" });
+  const [d, setD] = useState({ name: "", propertyType: "", market: "", address: "", source: "", units: "", yearBuilt: "", lotSize: "", sqft: "", description: "", askingPrice: "", offerPrice: "", pricePerUnit: "", pricePerSF: "", grossIncome: "", otherIncome: "", occupancy: "", marketRent: "", opex: "", taxes: "", insurance: "", capex: "", expenseMaintenance: "", expenseManagement: "", expenseReserves: "", expenseUtilities: "", constructionCosts: "", softCosts: "", constructionLoanAmount: "", constructionLoanTermMonths: "", constructionInterestRate: "", refiLoanAmount: "", refiLtv: "", refiRate: "", ltv: "", loanAmount: "", equityRaise: "", totalCapitalInvested: "", totalProjectCost: "", cashLeftInDeal: "", cashRemainingAfterRefinance: "", refiCashOut: "", lpPrefRate: 8, lpProfitShare: 45, arv: "", monthlyRentPerUnit: "", loanType: "amortizing", ioYears: "", interestRate: "", amortizationYears: 30, rentGrowth: 3, expenseGrowth: 2.5, exitCapRate: 6.25, targetCoC: "", targetIRR: "", targetMultiple: "", holdPeriod: "", submarket: "", comps: "", businessPlan: "", knownRisks: "", additionalNotes: "" });
   const [analysis, setAnalysis] = useState(null);
   const [loading, setLoading] = useState(false);
   const [followUps, setFollowUps] = useState([]);

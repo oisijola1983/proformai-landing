@@ -63,6 +63,9 @@ function quickExtractFromCsv(files) {
       if (key.includes("total capital invested")) out.totalCapitalInvested = Number(val);
       if (key.includes("total project cost") || key.includes("all-in total project cost")) out.totalProjectCost = Number(val);
       if (key.includes("cash left in deal") || key.includes("cash remaining after refinance")) out.cashLeftInDeal = Number(val);
+      if (key.includes("refi") && key.includes("cash")) out.refiCashOut = Number(val);
+      if (key.includes("preferred return") || key.includes("pref")) out.lpPrefRate = Number(val);
+      if (key.includes("lp share") || key.includes("investor share") || key.includes("profit share")) out.lpProfitShare = Number(val);
       if (key.includes("common fees")) out.commonFees = Number(val);
       if (key.includes("management") && key.includes("%")) out.managementPct = Number(val);
       if (key === "ltv") out.ltv = Number(val);
@@ -129,7 +132,7 @@ export default async function handler(req, res) {
     parts.push({
       type: "text",
       text: `Extract underwriting data from these broker package files. Return ONLY JSON. Prioritize explicit values from documents over calculated defaults.
-Required keys: {"name","propertyType","market","submarket","address","units","sqft","monthlyRentPerUnit","yearBuilt","askingPrice","offerPrice","arv","loanAmount","equityRaise","totalCapitalInvested","totalProjectCost","constructionCosts","softCosts","constructionLoanAmount","constructionLoanTermMonths","constructionInterestRate","refiLoanAmount","refiLtv","refiRate","loanType","ioYears","grossIncome","otherIncome","occupancy","opex","taxes","insurance","expenseMaintenance","expenseManagement","expenseReserves","expenseUtilities","capex","commonFees","managementPct","cashLeftInDeal","cashRemainingAfterRefinance","ltv","interestRate","amortizationYears","holdPeriod","rentGrowth","expenseGrowth","exitCapRate","targetIRR","targetCoC","summary"}.
+Required keys: {"name","propertyType","market","submarket","address","units","sqft","monthlyRentPerUnit","yearBuilt","askingPrice","offerPrice","arv","loanAmount","equityRaise","totalCapitalInvested","totalProjectCost","constructionCosts","softCosts","constructionLoanAmount","constructionLoanTermMonths","constructionInterestRate","refiLoanAmount","refiLtv","refiRate","loanType","ioYears","grossIncome","otherIncome","occupancy","opex","taxes","insurance","expenseMaintenance","expenseManagement","expenseReserves","expenseUtilities","capex","commonFees","managementPct","cashLeftInDeal","cashRemainingAfterRefinance","refiCashOut","lpPrefRate","lpProfitShare","ltv","interestRate","amortizationYears","holdPeriod","rentGrowth","expenseGrowth","exitCapRate","targetIRR","targetCoC","summary"}.
 Rules: If source has explicit loan/equity/ARV/line-items, use them. Only estimate when missing.
 Equity extraction: explicitly search for these labels and map to equityRaise when present: "Total Equity Raise", "Equity Required", "LP Capital", "Investor Contributions", "Cash Required to Close", "Total Capital Invested".
 Also extract "Cash Left in Deal" / "Cash Remaining After Refinance" when present for CoC denominator.
