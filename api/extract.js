@@ -30,6 +30,42 @@ function spreadsheetToText(file) {
   return chunks.join("\n\n").slice(0, 50000);
 }
 
+function normalizeExtraction(raw) {
+  const src = (raw && typeof raw === 'object') ? (raw.extracted && typeof raw.extracted === 'object' ? raw.extracted : raw) : {};
+  const out = { ...src };
+
+  const aliases = {
+    name: ['dealName', 'propertyName', 'assetName'],
+    address: ['propertyAddress', 'assetAddress'],
+    units: ['unitCount', 'numberOfUnits'],
+    sqft: ['squareFeet', 'buildingSqft', 'buildingSize'],
+    askingPrice: ['purchasePrice', 'listPrice', 'askPrice'],
+    offerPrice: ['proposedOffer', 'bidPrice'],
+    grossIncome: ['grossRentalIncome', 'annualGrossIncome', 'gpr'],
+    otherIncome: ['miscIncome', 'ancillaryIncome'],
+    occupancy: ['occupancyRate'],
+    opex: ['operatingExpenses', 'totalOperatingExpenses'],
+    taxes: ['propertyTaxes', 'annualTaxes'],
+    insurance: ['annualInsurance', 'insuranceCost'],
+    ltv: ['loanToValue'],
+    interestRate: ['rate', 'debtRate'],
+    amortizationYears: ['amortYears', 'amortization'],
+    exitCapRate: ['exitCap', 'terminalCapRate'],
+    rentGrowth: ['annualRentGrowth'],
+    expenseGrowth: ['annualExpenseGrowth']
+  };
+
+  for (const [canonical, keys] of Object.entries(aliases)) {
+    if (out[canonical] == null || out[canonical] === '') {
+      for (const k of keys) {
+        if (src[k] != null && src[k] !== '') { out[canonical] = src[k]; break; }
+      }
+    }
+  }
+
+  return out;
+}
+
 function quickExtractFromCsv(files) {
   const out = {};
   for (const f of files) {
@@ -45,8 +81,8 @@ function quickExtractFromCsv(files) {
       if (key.includes("units")) out.units = Number(val);
       if (key.includes("year built")) out.yearBuilt = Number(val);
       if (key.includes("square feet")) out.sqft = Number(val);
-      if (key.includes("asking price")) out.askingPrice = Number(val);
-      if (key.includes("gross income")) out.grossIncome = Number(val);
+      if (key.includes("asking price") || key.includes("purchase price") || key.includes("list price")) out.askingPrice = Number(val);
+      if (key.includes("gross income") || key.includes("gross rental income") || key === 'gpr') out.grossIncome = Number(val);
       if (key.includes("other income")) out.otherIncome = Number(val);
       if (key.includes("occupancy")) out.occupancy = Number(val);
       if (key.includes("operating expenses")) out.opex = Number(val);
@@ -68,8 +104,8 @@ function quickExtractFromCsv(files) {
       if (key.includes("lp share") || key.includes("investor share") || key.includes("profit share")) out.lpProfitShare = Number(val);
       if (key.includes("common fees")) out.commonFees = Number(val);
       if (key.includes("management") && key.includes("%")) out.managementPct = Number(val);
-      if (key === "ltv") out.ltv = Number(val);
-      if (key.includes("interest rate")) out.interestRate = Number(val);
+      if (key === "ltv" || key.includes('loan to value')) out.ltv = Number(val);
+      if (key.includes("interest rate") || key === 'rate' || key.includes('debt rate')) out.interestRate = Number(val);
       if (key.includes("amortization")) out.amortizationYears = Number(val);
       if (key.includes("exit cap")) out.exitCapRate = Number(val);
       if (key.includes("rent growth")) out.rentGrowth = Number(val);
@@ -140,9 +176,11 @@ Equity priority: explicit equityRaise > totalCapitalInvested > (totalProjectCost
 Loan amount priority: explicit loan amount > ARV*LTV > purchase price*LTV. Use null when unknown.`
     });
 
-    const extracted = testMode
+    const extractedRaw = testMode
       ? quickExtractFromCsv(files)
       : safeJsonParse((await callAnthropic(parts)).content?.map(c => c.text || "").join("\n"));
+
+    const extracted = normalizeExtraction(extractedRaw);
 
     const nextCredits = Math.max(0, credits - 1);
     if (testMode) {
