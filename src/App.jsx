@@ -13,6 +13,7 @@ import { useEffect, useMemo, useState } from "react";
 import UnderwritingApp from "./UnderwritingApp.jsx";
 
 const publishableKey = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY;
+const isTestMode = String(import.meta.env.VITE_TEST_MODE || "").toLowerCase() === "true";
 
 function AppFrame({ children }) {
   return (
@@ -41,6 +42,7 @@ function AppFrame({ children }) {
 
 function ProtectedRoute({ children }) {
   const location = useLocation();
+  if (isTestMode) return children;
   return (
     <>
       <SignedIn>{children}</SignedIn>

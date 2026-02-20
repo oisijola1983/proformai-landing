@@ -1,5 +1,6 @@
 import { createClerkClient } from "@clerk/backend";
 import { requireAuth } from "./_lib/auth.js";
+import { isTestMode, getTestCredits } from "./_lib/testMode.js";
 
 const clerkClient = createClerkClient({ secretKey: process.env.CLERK_SECRET_KEY });
 
@@ -7,6 +8,8 @@ export default async function handler(req, res) {
   if (req.method !== "GET") return res.status(405).json({ error: "Method not allowed" });
 
   try {
+    if (isTestMode()) return res.status(200).json({ credits: getTestCredits() });
+
     const { clerkUserId } = await requireAuth(req);
     const user = await clerkClient.users.getUser(clerkUserId);
     const credits = Number(user.privateMetadata?.credits || process.env.STARTER_CREDITS || 0);

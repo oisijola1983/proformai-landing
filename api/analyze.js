@@ -1,5 +1,6 @@
 import { createClerkClient } from "@clerk/backend";
 import { requireAuth } from "./_lib/auth.js";
+import { isTestMode, getTestCredits, setTestCredits } from "./_lib/testMode.js";
 
 const clerkClient = createClerkClient({ secretKey: process.env.CLERK_SECRET_KEY });
 
@@ -33,8 +34,9 @@ export default async function handler(req, res) {
 
   try {
     const { clerkUserId } = await requireAuth(req);
-    const user = await clerkClient.users.getUser(clerkUserId);
-    const currentCredits = Number(user.privateMetadata?.credits ?? process.env.STARTER_CREDITS ?? 0);
+    const testMode = isTestMode();
+    const user = testMode ? null : await clerkClient.users.getUser(clerkUserId);
+    const currentCredits = testMode ? getTestCredits() : Number(user.privateMetadata?.credits ?? process.env.STARTER_CREDITS ?? 0);
 
     if (currentCredits <= 0) {
       return res.status(402).json({
@@ -51,13 +53,17 @@ export default async function handler(req, res) {
     }
 
     const nextCredits = Math.max(0, currentCredits - 1);
-    await clerkClient.users.updateUserMetadata(clerkUserId, {
-      privateMetadata: {
-        ...(user.privateMetadata || {}),
-        credits: nextCredits,
-        lastAnalysisAt: new Date().toISOString(),
-      },
-    });
+    if (testMode) {
+      setTestCredits(nextCredits);
+    } else {
+      await clerkClient.users.updateUserMetadata(clerkUserId, {
+        privateMetadata: {
+          ...(user.privateMetadata || {}),
+          credits: nextCredits,
+          lastAnalysisAt: new Date().toISOString(),
+        },
+      });
+    }
 
     return res.status(200).json({ ...data, creditsRemaining: nextCredits });
   } catch (error) {
