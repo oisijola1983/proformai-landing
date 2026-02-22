@@ -46,6 +46,85 @@ function rate(v, defaultDecimal) {
   return n;
 }
 
+function normalizeLabel(label = "") {
+  return String(label || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+}
+
+function asFieldValue(raw) {
+  if (raw == null) return null;
+  if (typeof raw === "object" && "value" in raw) return raw.value;
+  return raw;
+}
+
+function applyExtractHandoffMappings(baseDraft, extracted = {}, semanticMap = {}) {
+  const next = { ...baseDraft };
+  const mapped = [];
+
+  const setIfEmpty = (key, value, reason) => {
+    if (!(key in next)) return;
+    if (value == null || value === "") return;
+    const current = next[key];
+    if (current != null && current !== "") return;
+    next[key] = value;
+    mapped.push({ key, value, reason });
+  };
+
+  const tryMapByLabel = (label, rawValue) => {
+    const l = normalizeLabel(label);
+    const v = num(rawValue, NaN);
+    if (!Number.isFinite(v)) return;
+
+    if (/year\s*1\s*noi|yr\s*1\s*noi|net operating income|\bnoi\b/.test(l)) setIfEmpty("grossIncome", v, `from label: ${label}`);
+    if (/operating expense|operating expenses|total opex|\bopex\b/.test(l)) setIfEmpty("opex", v, `from label: ${label}`);
+    if (/expense growth|opex growth|expense escalation/.test(l)) setIfEmpty("expenseGrowth", v, `from label: ${label}`);
+    if (/rent growth|income growth|revenue growth/.test(l)) setIfEmpty("rentGrowth", v, `from label: ${label}`);
+    if (/hold period|hold years|investment horizon|\bhold\b/.test(l)) setIfEmpty("holdPeriod", v, `from label: ${label}`);
+    if (/exit cap|terminal cap|cap rate exit/.test(l)) setIfEmpty("exitCapRate", v, `from label: ${label}`);
+    if (/loan amount|loan balance|principal balance|debt balance/.test(l)) setIfEmpty("loanAmount", v, `from label: ${label}`);
+    if (/debt service|annual debt service|debt payment/.test(l)) setIfEmpty("constructionLoanAmount", v, `from debt-service label: ${label}`);
+    if (/loan rate|interest rate|dscr loan rate|construction loan rate/.test(l)) setIfEmpty("interestRate", v, `from label: ${label}`);
+    if (/loan term|amortization|amortisation/.test(l)) {
+      if (v > 0 && v <= 60) setIfEmpty("constructionLoanTermMonths", v, `from label: ${label}`);
+      if (v > 5) setIfEmpty("amortizationYears", v, `from label: ${label}`);
+    }
+  };
+
+  // Canonical extracted fields first
+  Object.entries(extracted || {}).forEach(([k, raw]) => {
+    const value = asFieldValue(raw);
+    if (k in next && value != null && value !== "") setIfEmpty(k, value, "canonical extracted field");
+  });
+
+  // Semantic map fallback for broker/non-canonical labels
+  const docs = semanticMap?.documents || {};
+  Object.values(docs).forEach((doc) => {
+    (doc?.key_value_pairs || []).forEach((kv) => {
+      tryMapByLabel(kv?.label, kv?.raw_value);
+    });
+  });
+
+  return { next, mapped };
+}
+
+function missingPreAnalysisFields(input) {
+  const required = [
+    ["grossIncome", "NOI / gross income"],
+    ["opex", "operating expenses"],
+    ["expenseGrowth", "expense growth"],
+    ["holdPeriod", "hold period"],
+    ["exitCapRate", "exit cap rate"],
+    ["loanAmount", "loan amount / debt service basis"],
+    ["interestRate", "interest rate (for debt service)"]
+  ];
+
+  return required
+    .filter(([key]) => {
+      const v = input[key];
+      return v == null || v === "" || (typeof v === "number" && !Number.isFinite(v));
+    })
+    .map(([key, label]) => ({ key, label }));
+}
+
 function pmt(rate, nper, pv) {
   if (!rate) return pv / nper;
   return (rate * pv) / (1 - Math.pow(1 + rate, -nper));
@@ -231,7 +310,12 @@ function buildAuditReport(d, dcf) {
   const add = (title, status, detail, category = "General") => checks.push({ title, status, detail, category });
 
   if (!dcf) {
-    add("DCF generated", "fail", "DCF is missing. Complete required inputs first.", "Model");
+    const missing = missingPreAnalysisFields(d);
+    const detail = missing.length
+      ? `DCF is missing. Required inputs absent: ${missing.map(m => m.label).join(", ")}.`
+      : "DCF is missing. Complete required inputs first.";
+    add("DCF generated", "fail", detail, "Model");
+    missing.forEach((m) => add(`Missing: ${m.label}`, "fail", `Provide ${m.label} before analysis.`, "Model Inputs"));
     return { checks, score: 0, summary: "Incomplete model" };
   }
 
@@ -1201,22 +1285,31 @@ export default function App() {
 
       const p = res.extracted || {};
       const ne = {};
-      const nd = { ...d };
+      let nd = { ...d };
       Object.entries(p).forEach(([k, v]) => {
-        if (v != null && v !== "" && k !== "summary" && k in nd) {
+        const parsed = asFieldValue(v);
+        if (parsed != null && parsed !== "" && k !== "summary" && k in nd) {
           if (k === "market") {
-            const m = MKTS.find(x => x.toLowerCase().includes((v + "").toLowerCase().split(",")[0].trim()));
+            const m = MKTS.find(x => x.toLowerCase().includes((parsed + "").toLowerCase().split(",")[0].trim()));
             if (m) { nd[k] = m; ne[k] = true; }
           } else {
-            nd[k] = (v && typeof v === "object" && "value" in v) ? v.value : v;
+            nd[k] = parsed;
             ne[k] = true;
           }
         }
       });
+
+      const { next: mappedDraft, mapped } = applyExtractHandoffMappings(nd, p, res.semantic_map || {});
+      nd = mappedDraft;
+      mapped.forEach(({ key }) => { ne[key] = true; });
+
       setD(nd);
       setExFields(ne);
       setDocCtx(p.summary || "");
-      setExResult({ summary: p.summary || "Data extracted." });
+      setExResult({
+        summary: p.summary || "Data extracted.",
+        mapped: mapped.map(m => `${m.key} (${m.reason})`).slice(0, 8)
+      });
       if (typeof res.creditsRemaining === "number") setCredits(res.creditsRemaining);
       setExtractProgress(100);
     } catch (e) {
@@ -1231,6 +1324,22 @@ export default function App() {
     setLoading(true); setAnalysis(null); setFollowUps([]);
     try {
       setCreditError("");
+
+      const missing = missingPreAnalysisFields(d);
+      if (missing.length > 0) {
+        setAnalysis({
+          verdict: `Cannot run analysis yet. Missing required inputs: ${missing.map(m => m.label).join(", ")}.`,
+          scores: {},
+          metrics: [],
+          missingData: missing.map(m => ({ item: m.label, impact: "high", why: "Required for DCF/underwriting handoff." })),
+          redFlags: [{ title: "Incomplete underwriting inputs", severity: "warning", detail: `Provide: ${missing.map(m => m.label).join(", ")}` }],
+          questions: [],
+          ddChecklist: []
+        });
+        setLoading(false);
+        return;
+      }
+
       const token = isTestMode ? null : await getToken();
       const resp = await fetch("/api/analyze", {
         method: "POST",
