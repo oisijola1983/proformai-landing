@@ -1208,7 +1208,7 @@ export default function App() {
             const m = MKTS.find(x => x.toLowerCase().includes((v + "").toLowerCase().split(",")[0].trim()));
             if (m) { nd[k] = m; ne[k] = true; }
           } else {
-            nd[k] = v;
+            nd[k] = (v && typeof v === "object" && "value" in v) ? v.value : v;
             ne[k] = true;
           }
         }

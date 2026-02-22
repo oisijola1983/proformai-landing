@@ -2,11 +2,42 @@ import { createClerkClient } from "@clerk/backend";
 import { requireAuth } from "./_lib/auth.js";
 import { isTestMode, getTestCredits, setTestCredits } from "./_lib/testMode.js";
 import XLSX from "xlsx";
+import fs from "node:fs";
+import path from "node:path";
 
 const clerkClient = createClerkClient({ secretKey: process.env.CLERK_SECRET_KEY });
 
+const REQUIRED_DOC_TYPES = ["om", "t12", "rent_roll", "loan_term_sheet", "appraisal", "pfs", "construction_budget"];
+const FIELD_NAMES = [
+  "askingPrice", "offerPrice", "pricePerUnit", "pricePerSF", "arv",
+  "name", "address", "propertyType", "market", "units", "yearBuilt", "sqft", "lotSize", "description",
+  "grossIncome", "otherIncome", "occupancy", "marketRent", "monthlyRentPerUnit", "commonFees",
+  "opex", "taxes", "insurance", "expenseMaintenance", "expenseManagement", "expenseReserves", "expenseUtilities", "capex",
+  "ltv", "loanAmount", "interestRate", "amortizationYears", "loanType", "ioYears", "equityRaise", "totalCapitalInvested", "totalProjectCost",
+  "constructionCosts", "softCosts", "constructionLoanAmount", "constructionLoanTermMonths", "constructionInterestRate",
+  "refiLoanAmount", "refiLtv", "refiRate", "refiCashOut", "cashLeftInDeal",
+  "targetCoC", "targetIRR", "targetMultiple", "holdPeriod", "rentGrowth", "expenseGrowth", "exitCapRate",
+  "submarket", "comps", "businessPlan", "knownRisks", "additionalNotes",
+];
+
+const KEY_FIELDS = ["askingPrice", "grossIncome", "units", "ltv", "interestRate"];
+const IMPORTANT_FIELDS = ["opex", "taxes", "insurance", "occupancy", "exitCapRate", "marketRent"];
+
+function toNumber(v) {
+  if (v == null || v === "") return null;
+  if (typeof v === "number") return Number.isFinite(v) ? v : null;
+  const n = Number(String(v).replace(/[,$%\s]/g, ""));
+  return Number.isFinite(n) ? n : null;
+}
+
+function toRate(v) {
+  const n = toNumber(v);
+  if (n == null) return null;
+  return n > 1 ? n / 100 : n;
+}
+
 function safeJsonParse(text) {
-  if (!text) return {};
+  if (!text) return null;
   const clean = String(text).replace(/```json\s*/gi, "").replace(/```/g, "").trim();
   try { return JSON.parse(clean); } catch {}
   const i = clean.indexOf("{");
@@ -14,353 +45,457 @@ function safeJsonParse(text) {
   if (i >= 0 && j > i) {
     try { return JSON.parse(clean.slice(i, j + 1)); } catch {}
   }
-  return {};
+  return null;
 }
 
-function spreadsheetToText(file) {
+function estimatePdfPages(file) {
+  try {
+    const buf = Buffer.from(file.data, "base64");
+    const txt = buf.toString("latin1");
+    const m = txt.match(/\/Type\s*\/Page\b/g);
+    return m ? m.length : null;
+  } catch {
+    return null;
+  }
+}
+
+function spreadsheetToStructuredText(file) {
   const buf = Buffer.from(file.data, "base64");
   const wb = XLSX.read(buf, { type: "buffer" });
-  const chunks = [];
-  for (const name of wb.SheetNames.slice(0, 5)) {
+  const out = [];
+  for (const name of wb.SheetNames.slice(0, 8)) {
     const sheet = wb.Sheets[name];
-    const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: false }).slice(0, 120);
-    chunks.push(`Sheet: ${name}`);
-    chunks.push(rows.map(r => (r || []).join(" | ")).join("\n"));
+    const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: false }).slice(0, 200);
+    out.push(`# SHEET: ${name}`);
+    rows.forEach((r, idx) => out.push(`${idx + 1}| ${(r || []).join(" | ")}`));
   }
-  return chunks.join("\n\n").slice(0, 50000);
+  return out.join("\n").slice(0, 100000);
 }
 
-function normalizeExtraction(raw) {
-  const src = (raw && typeof raw === 'object') ? (raw.extracted && typeof raw.extracted === 'object' ? raw.extracted : raw) : {};
-  const out = { ...src };
+function csvToStructuredText(file) {
+  const text = Buffer.from(file.data, "base64").toString("utf8");
+  const lines = text.split(/\r?\n/).slice(0, 300);
+  return lines.map((l, i) => `${i + 1}| ${l}`).join("\n").slice(0, 100000);
+}
 
-  // Expanded alias map for robust fallback matching
-  const aliases = {
-    name: ['dealName', 'propertyName', 'assetName', 'dealTitle', 'projectName'],
-    address: ['propertyAddress', 'assetAddress', 'siteAddress', 'location', 'streetAddress'],
-    units: ['unitCount', 'numberOfUnits', 'totalUnits', 'unitCount'],
-    sqft: ['squareFeet', 'buildingSqft', 'buildingSize', 'totalSqft', 'rentableSqft', 'netsf'],
-    askingPrice: ['purchasePrice', 'listPrice', 'askPrice', 'purchasePrice', 'price', 'askingPrice'],
-    offerPrice: ['proposedOffer', 'bidPrice', 'offerAmount'],
-    grossIncome: ['grossRentalIncome', 'annualGrossIncome', 'gpr', 'potentialGrossIncome', 'pgi', 'annualIncome'],
-    otherIncome: ['miscIncome', 'ancillaryIncome', 'parkingIncome', 'miscellaneousIncome'],
-    occupancy: ['occupancyRate', 'occupancyPercent', 'occupiedUnits'],
-    opex: ['operatingExpenses', 'totalOperatingExpenses', 'annualOpex', 'totalOpex'],
-    taxes: ['propertyTaxes', 'annualTaxes', 'taxesAnnual', 'realEstateTaxes'],
-    insurance: ['annualInsurance', 'insuranceCost', 'annualInsuranceCost', 'propertyInsurance'],
-    ltv: ['loanToValue', 'ltvRatio', 'loanToValueRatio'],
-    interestRate: ['rate', 'debtRate', 'interestRatePercent', 'mortgageRate'],
-    amortizationYears: ['amortYears', 'amortization', 'amortizationPeriod', 'loanTerm'],
-    exitCapRate: ['exitCap', 'terminalCapRate', 'capitalizedRate', 'exitCapitalizationRate'],
-    rentGrowth: ['annualRentGrowth', 'rentGrowthRate', 'rentInflation'],
-    expenseGrowth: ['annualExpenseGrowth', 'expenseGrowthRate'],
-    loanAmount: ['principalAmount', 'debtAmount', 'mortgageAmount', 'loanBalance'],
-    equityRaise: ['equityRequired', 'capitalRequired', 'investorContributions', 'lpCapital', 'equityCapital'],
-    totalCapitalInvested: ['totalCapitalInvestment', 'allCapitalRequired'],
-    totalProjectCost: ['totalDevelopmentCost', 'totalProjectCost', 'allInCost', 'allInTotalProjectCost'],
+function emptyField(name) {
+  return {
+    value: null,
+    raw_value: null,
+    source_snippet: null,
+    location: null,
+    confidence: null,
+    not_found_in_source: true,
+    conflict: false,
+    conflict_detail: null,
+    suggested_derivation: null,
+    field: name,
   };
-
-  for (const [canonical, keys] of Object.entries(aliases)) {
-    if (out[canonical] == null || out[canonical] === '') {
-      for (const k of keys) {
-        if (src[k] != null && src[k] !== '') { out[canonical] = src[k]; break; }
-      }
-    }
-  }
-
-  // Ensure critical fields for DCF are present and valid
-  const dcfRequired = [
-    'name', 'address', 'units', 'sqft', 'monthlyRentPerUnit', 'yearBuilt',
-    'askingPrice', 'loanAmount', 'interestRate', 'amortizationYears',
-    'grossIncome', 'occupancy', 'opex', 'ltv'
-  ];
-
-  // Include extraction notes if present
-  const review_flags = [];
-  if (out.extraction_notes) {
-    review_flags.push(out.extraction_notes);
-  }
-  
-  // Add flags for fields that were derived or ambiguous
-  for (const field of dcfRequired) {
-    if (!out[field] && out[field] !== 0 && out[field] !== false) {
-      review_flags.push(`${field} was not found in source document`);
-    }
-  }
-
-  if (review_flags.length > 0) {
-    out.extraction_review_flags = review_flags;
-  }
-
-  return out;
 }
 
-function quickExtractFromCsv(files) {
-  const out = {};
+function normalizeDocuments(files, docs = []) {
+  const byName = new Map((docs || []).map(d => [d.filename, d]));
+  return files.map((f) => {
+    const got = byName.get(f.name) || {};
+    const mime = f.mimeType || "application/octet-stream";
+    const page_count = got.page_count ?? (mime === "application/pdf" ? estimatePdfPages(f) : 1);
+    return {
+      filename: f.name,
+      doc_type: got.doc_type || "unknown",
+      doc_type_confidence: got.doc_type_confidence || "low",
+      page_count: page_count || null,
+      classification_reasoning: got.classification_reasoning || "No confident document-type signal found.",
+    };
+  });
+}
+
+function normalizeSemanticMap(map = {}, files = []) {
+  const m = (map && typeof map === "object") ? map : {};
+  const docMaps = (m.documents && typeof m.documents === "object") ? m.documents : {};
+  const normalized = { documents: {} };
   for (const f of files) {
-    if (f.mimeType !== "text/csv") continue;
-    const text = Buffer.from(f.data, "base64").toString("utf8");
-    for (const line of text.split(/\r?\n/)) {
-      const [k, ...rest] = line.split(",");
-      const key = (k || "").trim().toLowerCase();
-      const val = rest.join(",").trim();
-      if (!key || !val) continue;
-      if (key.includes("deal name")) out.name = val;
-      if (key.includes("address")) out.address = val;
-      if (key.includes("units")) out.units = Number(val);
-      if (key.includes("year built")) out.yearBuilt = Number(val);
-      if (key.includes("square feet")) out.sqft = Number(val);
-      if (key.includes("asking price") || key.includes("purchase price") || key.includes("list price")) out.askingPrice = Number(val);
-      if (key.includes("gross income") || key.includes("gross rental income") || key === 'gpr') out.grossIncome = Number(val);
-      if (key.includes("other income")) out.otherIncome = Number(val);
-      if (key.includes("occupancy")) out.occupancy = Number(val);
-      if (key.includes("operating expenses")) out.opex = Number(val);
-      if (key === "taxes" || key.includes("property tax")) out.taxes = Number(val);
-      if (key.includes("insurance")) out.insurance = Number(val);
-      if (key.includes("maintenance")) out.expenseMaintenance = Number(val);
-      if (key.includes("management")) out.expenseManagement = Number(val);
-      if (key.includes("reserves")) out.expenseReserves = Number(val);
-      if (key.includes("utilities")) out.expenseUtilities = Number(val);
-      if (key.includes("capex") || key.includes("construction cost")) out.capex = Number(val);
-      if (key.includes("arv") || key.includes("after repair value")) out.arv = Number(val);
-      if (key.includes("loan amount")) out.loanAmount = Number(val);
-      if (key.includes("equity raise") || key.includes("equity required") || key.includes("lp capital") || key.includes("investor contributions") || key.includes("cash required to close") || key.includes("total capital invested")) out.equityRaise = Number(val);
-      if (key.includes("total capital invested")) out.totalCapitalInvested = Number(val);
-      if (key.includes("total project cost") || key.includes("all-in total project cost")) out.totalProjectCost = Number(val);
-      if (key.includes("cash left in deal") || key.includes("cash remaining after refinance")) out.cashLeftInDeal = Number(val);
-      if (key.includes("refi") && key.includes("cash")) out.refiCashOut = Number(val);
-      if (key.includes("preferred return") || key.includes("pref")) out.lpPrefRate = Number(val);
-      if (key.includes("lp share") || key.includes("investor share") || key.includes("profit share")) out.lpProfitShare = Number(val);
-      if (key.includes("common fees")) out.commonFees = Number(val);
-      if (key.includes("management") && key.includes("%")) out.managementPct = Number(val);
-      if (key === "ltv" || key.includes('loan to value')) out.ltv = Number(val);
-      if (key.includes("interest rate") || key === 'rate' || key.includes('debt rate')) out.interestRate = Number(val);
-      if (key.includes("amortization")) out.amortizationYears = Number(val);
-      if (key.includes("exit cap")) out.exitCapRate = Number(val);
-      if (key.includes("rent growth")) out.rentGrowth = Number(val);
-      if (key.includes("expense growth")) out.expenseGrowth = Number(val);
+    const d = docMaps[f.name] || {};
+    normalized.documents[f.name] = {
+      sections: Array.isArray(d.sections) ? d.sections : [],
+      tables: Array.isArray(d.tables) ? d.tables : [],
+      key_value_pairs: Array.isArray(d.key_value_pairs) ? d.key_value_pairs : [],
+    };
+  }
+  return normalized;
+}
+
+function normalizeExtracted(extracted = {}) {
+  const out = {};
+  for (const key of FIELD_NAMES) {
+    const v = extracted?.[key];
+    if (v && typeof v === "object" && ("value" in v || "not_found_in_source" in v)) {
+      out[key] = {
+        ...emptyField(key),
+        ...v,
+        field: key,
+      };
+    } else if (v != null && v !== "") {
+      out[key] = {
+        ...emptyField(key),
+        value: v,
+        raw_value: String(v),
+        source_snippet: "Value returned without evidence envelope.",
+        confidence: "low",
+        not_found_in_source: false,
+        field: key,
+      };
+    } else {
+      out[key] = emptyField(key);
     }
   }
-  out.market = out.address?.includes("Houston") ? "Houston, TX" : null;
-  out.summary = "Test-mode extraction generated from uploaded CSV.";
   return out;
 }
 
-function validateExtractionForDcf(extracted) {
-  const issues = [];
-  
-  // Helper to convert various formats to numbers
-  const num = (v, def = 0) => {
-    if (v === null || v === undefined || v === '') return def;
-    if (typeof v === 'number') return Number.isFinite(v) ? v : def;
-    const str = String(v).trim().replace(/[,$%x]/g, '').replace(/,/g, '');
-    const n = Number(str);
-    return Number.isFinite(n) ? n : def;
+function runCrossChecks(extracted) {
+  const pick = (k) => extracted[k]?.value;
+  const askingPrice = toNumber(pick("askingPrice"));
+  const loanAmount = toNumber(pick("loanAmount"));
+  const equityRaise = toNumber(pick("equityRaise"));
+  const totalProjectCost = toNumber(pick("totalProjectCost"));
+  const ltv = toRate(pick("ltv"));
+  const grossIncome = toNumber(pick("grossIncome"));
+  const opex = toNumber(pick("opex"));
+  const occupancy = toNumber(pick("occupancy"));
+  const units = toNumber(pick("units"));
+  const pricePerUnit = toNumber(pick("pricePerUnit"));
+  const monthlyRentPerUnit = toNumber(pick("monthlyRentPerUnit"));
+  const arv = toNumber(pick("arv"));
+
+  const vacancyRate = occupancy == null ? 0.08 : (occupancy > 1 ? (100 - occupancy) / 100 : 1 - occupancy);
+  const noi = (grossIncome ?? 0) * (1 - vacancyRate) - (opex ?? 0);
+
+  const result = {
+    cost_stack: { pass: true, detail: "Insufficient data" },
+    ltv_sanity: { pass: true, detail: "Insufficient data" },
+    noi_sanity: { pass: true, detail: "Insufficient data" },
+    expense_ratio: { pass: true, detail: "Insufficient data" },
+    debt_yield: { pass: true, detail: "Insufficient data" },
+    unit_math: { pass: true, detail: "Insufficient data" },
+    rent_math: { pass: true, detail: "Insufficient data" },
+    occupancy_sanity: { pass: true, detail: "Insufficient data" },
+    cap_rate_sanity: { pass: true, detail: "Insufficient data" },
+    arv_vs_price: { pass: true, detail: "Insufficient data" },
   };
-  
-  const rate = (v, def = 0) => {
-    const n = num(v, def);
-    if (n > 1) return n / 100; // Convert percent to decimal
-    return n;
-  };
 
-  const askingPrice = num(extracted.askingPrice);
-  const loanAmount = num(extracted.loanAmount);
-  const interestRate = rate(extracted.interestRate);
-  const grossIncome = num(extracted.grossIncome);
-  const opex = num(extracted.opex);
-  const occupancy = num(extracted.occupancy, NaN);
-  const equity = num(extracted.equityRaise) || num(extracted.totalCapitalInvested);
-
-  // Critical validation: DCF requires these minimum values
-  if (!askingPrice || askingPrice <= 0) {
-    issues.push("Purchase price is missing or invalid. DCF cannot run without it.");
-  }
-  
-  if (!grossIncome || grossIncome <= 0) {
-    issues.push("Gross income is missing or invalid. Income is required for NOI calculation.");
-  }
-  
-  if (!loanAmount || loanAmount <= 0) {
-    issues.push("Loan amount is missing or invalid. Debt structure required.");
+  if (loanAmount != null && equityRaise != null && totalProjectCost != null && totalProjectCost !== 0) {
+    const diff = Math.abs((loanAmount + equityRaise) - totalProjectCost) / totalProjectCost;
+    result.cost_stack = {
+      pass: diff <= 0.05,
+      detail: `Loan ${loanAmount} + Equity ${equityRaise} vs Total ${totalProjectCost} (diff ${(diff * 100).toFixed(2)}%)`,
+    };
   }
 
-  // NOI viability check
-  if (grossIncome > 0 && opex > 0) {
-    const noi = grossIncome - opex;
-    if (noi <= 0) {
-      issues.push(`WARNING: NOI is ${noi.toFixed(0)} (gross ${grossIncome} - opex ${opex}). This deal has negative cash flow.`);
-    }
-    if (noi < grossIncome * 0.15) {
-      issues.push(`WARNING: NOI margin is thin (${((noi / grossIncome) * 100).toFixed(1)}%). Verify opex is not overstated.`);
+  if (loanAmount != null && askingPrice != null && askingPrice > 0 && ltv != null) {
+    const calc = loanAmount / askingPrice;
+    const diff = Math.abs(calc - ltv);
+    result.ltv_sanity = {
+      pass: diff <= 0.03,
+      detail: `Stated LTV ${(ltv * 100).toFixed(2)}% vs calc ${(calc * 100).toFixed(2)}% (diff ${(diff * 100).toFixed(2)}%)`,
+    };
+  }
+
+  if (grossIncome != null && opex != null) {
+    result.noi_sanity = {
+      pass: noi > 0,
+      detail: `NOI ${(noi || 0).toFixed(2)}`,
+    };
+    const ratio = grossIncome ? opex / grossIncome : null;
+    if (ratio != null) {
+      result.expense_ratio = {
+        pass: ratio >= 0.25 && ratio <= 0.65,
+        detail: `Expense ratio ${(ratio * 100).toFixed(2)}%`,
+      };
     }
   }
 
-  // Loan structure sanity checks
-  if (askingPrice > 0 && loanAmount > askingPrice * 1.1) {
-    issues.push(`WARNING: Loan (${(loanAmount / 1e6).toFixed(2)}M) exceeds purchase price (${(askingPrice / 1e6).toFixed(2)}M). Check for missing equity or construction loan.`);
+  if (noi != null && loanAmount != null && loanAmount > 0) {
+    const dy = noi / loanAmount;
+    result.debt_yield = {
+      pass: dy >= 0.07,
+      detail: `Debt yield ${(dy * 100).toFixed(2)}%`,
+    };
   }
 
-  // Interest rate reasonableness
-  if (interestRate > 0 && (interestRate < 0.02 || interestRate > 0.15)) {
-    issues.push(`WARNING: Interest rate ${(interestRate * 100).toFixed(2)}% seems unusual. Verify it's in decimal format (0.07 = 7%).`);
+  if (pricePerUnit != null && units != null && askingPrice != null && askingPrice > 0) {
+    const calc = pricePerUnit * units;
+    const diff = Math.abs(calc - askingPrice) / askingPrice;
+    result.unit_math = {
+      pass: diff <= 0.05,
+      detail: `${pricePerUnit} × ${units} = ${calc} vs asking ${askingPrice} (diff ${(diff * 100).toFixed(2)}%)`,
+    };
   }
 
-  // Occupancy sanity
-  if (Number.isFinite(occupancy)) {
-    if (occupancy < 50 || occupancy > 105) {
-      issues.push(`WARNING: Occupancy ${occupancy}% seems unusual. Should typically be 70-100%.`);
-    }
+  if (monthlyRentPerUnit != null && units != null && grossIncome != null && grossIncome > 0) {
+    const calc = monthlyRentPerUnit * units * 12;
+    const diff = Math.abs(calc - grossIncome) / grossIncome;
+    result.rent_math = {
+      pass: diff <= 0.10,
+      detail: `${monthlyRentPerUnit} × ${units} × 12 = ${calc} vs gross ${grossIncome} (diff ${(diff * 100).toFixed(2)}%)`,
+    };
   }
 
-  // Loan-to-value sanity
-  if (askingPrice > 0 && loanAmount > 0) {
-    const ltv = loanAmount / askingPrice;
-    if (ltv > 1.0) {
-      issues.push(`WARNING: LTV ${(ltv * 100).toFixed(1)}% exceeds 100%. Verify this is intended.`);
-    }
+  if (occupancy != null) {
+    const occPct = occupancy > 1 ? occupancy : occupancy * 100;
+    result.occupancy_sanity = {
+      pass: occPct >= 50 && occPct <= 100,
+      detail: `Occupancy ${occPct.toFixed(2)}%`,
+    };
   }
 
-  return issues;
+  if (noi != null && askingPrice != null && askingPrice > 0) {
+    const cap = noi / askingPrice;
+    result.cap_rate_sanity = {
+      pass: cap >= 0.03 && cap <= 0.15,
+      detail: `Cap rate ${(cap * 100).toFixed(2)}%`,
+    };
+  }
+
+  if (arv != null && askingPrice != null) {
+    result.arv_vs_price = {
+      pass: arv > askingPrice,
+      detail: `ARV ${arv} vs asking ${askingPrice}`,
+    };
+  }
+
+  return result;
 }
 
-async function callAnthropic(parts, systemPrompt) {
+function computeQuality(extracted, crossChecks, documents) {
+  const missingEvidence = [];
+  const crossFailures = Object.entries(crossChecks)
+    .filter(([, v]) => v && v.pass === false)
+    .map(([k]) => k);
+
+  let needsReview = false;
+
+  for (const f of KEY_FIELDS) {
+    const item = extracted[f];
+    if (!item || item.value == null || item.confidence === "low") {
+      needsReview = true;
+      missingEvidence.push({
+        field: f,
+        severity: "critical",
+        reason: item?.value == null ? "Not found in any uploaded document" : "Low confidence extraction",
+        suggestion: `Provide clearer source evidence for ${f} (OM, T-12, rent roll, or debt term sheet).`,
+      });
+    }
+  }
+
+  for (const f of IMPORTANT_FIELDS) {
+    const item = extracted[f];
+    if (!item || item.value == null) {
+      missingEvidence.push({
+        field: f,
+        severity: "important",
+        reason: "Missing from current extraction evidence",
+        suggestion: `Upload source docs that contain ${f} (or verify from broker package).`,
+      });
+    }
+  }
+
+  if (crossFailures.length >= 3) needsReview = true;
+
+  const coverage = Object.fromEntries(REQUIRED_DOC_TYPES.map(t => [t, false]));
+  for (const d of documents) {
+    if (coverage[d.doc_type] !== undefined && d.doc_type_confidence !== "low") coverage[d.doc_type] = true;
+  }
+  const missingDocs = Object.entries(coverage).filter(([, v]) => !v).map(([k]) => k);
+
+  let score = 100;
+  score -= missingEvidence.filter(m => m.severity === "critical").length * 12;
+  score -= missingEvidence.filter(m => m.severity === "important").length * 5;
+  score -= crossFailures.length * 4;
+  score = Math.max(0, Math.min(100, score));
+
+  const summary = (() => {
+    const found = FIELD_NAMES.filter(k => extracted[k]?.value != null).length;
+    return `${found}/${FIELD_NAMES.length} fields resolved with evidence. ${missingEvidence.length} gaps identified. ${crossFailures.length} cross-checks failed.`;
+  })();
+
+  return {
+    needs_review: needsReview,
+    quality_score: score,
+    missing_evidence: missingEvidence,
+    cross_check_failures: crossFailures,
+    doc_coverage: coverage,
+    missing_docs: missingDocs,
+    summary,
+  };
+}
+
+function logQualityScore(payload) {
+  try {
+    const root = process.cwd();
+    const p = path.join(root, "shared", "logs", "extraction-quality.jsonl");
+    fs.mkdirSync(path.dirname(p), { recursive: true });
+    fs.appendFileSync(p, JSON.stringify(payload) + "\n", "utf8");
+  } catch {
+    // best-effort only
+  }
+}
+
+async function callAnthropic(parts) {
+  const key = process.env.ANTHROPIC_API_KEY;
+  if (!key) throw new Error("ANTHROPIC_API_KEY not configured");
+
+  const systemPrompt = `You are ProformAI's extraction engine.
+Return ONE JSON object only.
+Execute in 5 passes in a SINGLE response:
+1) document classification per file
+2) semantic_map per document (sections/tables/key_value_pairs)
+3) evidence-based extracted fields with provenance, confidence, conflict handling
+4) cross_checks using the specified rules
+5) quality gate fields (needs_review, quality_score, missing_evidence, cross_check_failures, doc_coverage, missing_docs, summary)
+
+Rules:
+- Never guess values.
+- If missing, return value:null and not_found_in_source:true.
+- Confidence: high|medium|low.
+- Include location {filename,page,section} whenever possible.
+- Detect conflicting values across documents.
+- Output keys must include all requested extraction fields.`;
+
+  const userInstruction = {
+    type: "text",
+    text: `Perform complete document-first extraction for all uploaded documents.
+Return this exact top-level shape:
+{
+  "documents": [...],
+  "semantic_map": {"documents": {"<filename>": {"sections":[],"tables":[],"key_value_pairs":[]}}},
+  "extracted": {"<field>": {...}},
+  "cross_checks": {...},
+  "needs_review": true|false,
+  "quality_score": 0-100,
+  "missing_evidence": [...],
+  "cross_check_failures": [...],
+  "doc_coverage": {...},
+  "missing_docs": [...],
+  "summary": "..."
+}`,
+  };
+
   const response = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      "x-api-key": process.env.ANTHROPIC_API_KEY,
+      "x-api-key": key,
       "anthropic-version": "2023-06-01",
     },
     body: JSON.stringify({
-      model: "claude-sonnet-4-20250514",
-      max_tokens: 3000,
-      system: systemPrompt || undefined,
-      messages: [{ role: "user", content: parts }],
+      model: "claude-opus-4-20250514",
+      max_tokens: 8000,
+      system: systemPrompt,
+      messages: [{ role: "user", content: [...parts, userInstruction] }],
     }),
   });
+
   const data = await response.json();
   if (!response.ok) throw new Error(data?.error?.message || "Extraction request failed");
-  return data;
+  const text = data?.content?.map(c => c.text || "").join("\n") || "";
+  const parsed = safeJsonParse(text);
+  if (!parsed) throw new Error("Model response was not valid JSON");
+  return parsed;
+}
+
+function buildParts(files) {
+  const parts = [];
+  for (const f of files.slice(0, 10)) {
+    const mime = f.mimeType || "application/octet-stream";
+    if (mime === "application/pdf") {
+      parts.push({ type: "document", source: { type: "base64", media_type: mime, data: f.data } });
+    } else if (mime.startsWith("image/")) {
+      parts.push({ type: "image", source: { type: "base64", media_type: mime, data: f.data } });
+    } else if (mime === "text/csv") {
+      parts.push({ type: "text", text: `FILE: ${f.name}\nTYPE: csv\n${csvToStructuredText(f)}` });
+    } else if (mime.includes("excel") || mime.includes("spreadsheetml")) {
+      parts.push({ type: "text", text: `FILE: ${f.name}\nTYPE: spreadsheet\n${spreadsheetToStructuredText(f)}` });
+    } else {
+      parts.push({ type: "text", text: `FILE: ${f.name}\nUnsupported mime ${mime} for direct parse.` });
+    }
+  }
+  return parts;
+}
+
+function buildTestModeResult(files) {
+  const documents = normalizeDocuments(files, files.map(f => ({
+    filename: f.name,
+    doc_type: (f.mimeType || "").includes("csv") ? "rent_roll" : "unknown",
+    doc_type_confidence: (f.mimeType || "").includes("csv") ? "medium" : "low",
+    page_count: 1,
+    classification_reasoning: "TEST_MODE heuristic classification",
+  })));
+
+  const semantic_map = normalizeSemanticMap({}, files);
+  const extracted = normalizeExtracted({});
+  const cross_checks = runCrossChecks(extracted);
+  const q = computeQuality(extracted, cross_checks, documents);
+  return { documents, semantic_map, extracted, cross_checks, ...q };
 }
 
 export default async function handler(req, res) {
   if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
 
+  let clerkUserId = null;
+  let user = null;
+  let credits = 0;
+  const pass_errors = [];
+
   try {
-    const { clerkUserId } = await requireAuth(req);
+    ({ clerkUserId } = await requireAuth(req));
     const testMode = isTestMode();
-    const user = testMode ? null : await clerkClient.users.getUser(clerkUserId);
-    const credits = testMode ? getTestCredits() : Number(user.privateMetadata?.credits ?? process.env.STARTER_CREDITS ?? 0);
-    if (credits <= 0) return res.status(402).json({ error: "No credits remaining", credits: 0 });
+    user = testMode ? null : await clerkClient.users.getUser(clerkUserId);
+    credits = testMode ? getTestCredits() : Number(user.privateMetadata?.credits ?? process.env.STARTER_CREDITS ?? 0);
 
-    const files = Array.isArray(req.body?.files) ? req.body.files : [];
-    if (!files.length) return res.status(400).json({ error: "No files uploaded" });
-
-    const parts = [];
-    for (const f of files.slice(0, 8)) {
-      const mime = f.mimeType || "application/octet-stream";
-      if (mime === "application/pdf") {
-        parts.push({ type: "document", source: { type: "base64", media_type: mime, data: f.data } });
-      } else if (mime.startsWith("image/")) {
-        parts.push({ type: "image", source: { type: "base64", media_type: mime, data: f.data } });
-      } else if (mime === "text/csv") {
-        const text = Buffer.from(f.data, "base64").toString("utf8").slice(0, 50000);
-        parts.push({ type: "text", text: `CSV file (${f.name}):\n${text}` });
-      } else if (mime.includes("excel") || mime.includes("spreadsheetml")) {
-        const text = spreadsheetToText(f);
-        parts.push({ type: "text", text: `Spreadsheet (${f.name}):\n${text}` });
-      }
+    if (credits <= 0) {
+      return res.status(402).json({ error: "No credits remaining", credits: 0 });
     }
 
-    // Phase 1: Semantic extraction with document understanding
-    const extractionSystem = `You are an expert real estate underwriter analyzing broker packages and investment documents.
-Your job is to extract underwriting field values by understanding document CONTEXT and STRUCTURE, not by brittle cell-address assumptions.
+    const files = Array.isArray(req.body?.files) ? req.body.files : [];
+    if (!files.length) {
+      return res.status(400).json({ error: "No files uploaded", pass_errors: ["files_missing"] });
+    }
 
-Guidelines:
-1. READ THE FULL DOCUMENT - Understand tables, sections, headers, and labels to infer meaning
-2. SEMANTIC MATCHING - Map values by meaning (e.g., "Total Equity Raise" or "Investor Contributions" → equityRaise)
-3. AMBIGUITY - If a value could mean multiple things, choose the most reasonable interpretation. FLAG it in "extraction_notes" if unclear.
-4. VALIDATION - Cross-check related values (e.g., loan + equity should ≈ purchase price or project cost)
-5. NO ESTIMATES - Only return values explicitly in the document. For missing fields, use null or 0.
+    let payload;
+    try {
+      if (testMode) {
+        payload = buildTestModeResult(files);
+      } else {
+        const parts = buildParts(files);
+        const modelOut = await callAnthropic(parts);
 
-Output ONLY valid JSON with these fields (use null for unknowns):
-{
-  "name": "property/deal name",
-  "propertyType": "multifamily|industrial|office|mixed-use|...",
-  "address": "full street address",
-  "market": "City, State",
-  "submarket": "neighborhood or submarket name",
-  "units": "unit count (integer)",
-  "sqft": "rentable square feet (number)",
-  "monthlyRentPerUnit": "average monthly rent per unit",
-  "yearBuilt": "year built (integer)",
-  "askingPrice": "purchase price / asking price",
-  "offerPrice": "offer price if different from asking",
-  "arv": "after-repair or future value",
-  "loanAmount": "primary loan amount (explicit)",
-  "equityRaise": "equity raise or capital required (explicit)",
-  "totalCapitalInvested": "total capital invested (different from equity if includes debt)",
-  "totalProjectCost": "all-in development cost including land",
-  "constructionCosts": "hard costs",
-  "softCosts": "soft costs (fees, permits, etc)",
-  "constructionLoanAmount": "construction debt",
-  "refiLoanAmount": "refinance loan amount",
-  "refiRate": "refinance interest rate",
-  "loanType": "amortizing|io|construction|...",
-  "ioYears": "interest-only period (years)",
-  "grossIncome": "annual gross rental income",
-  "otherIncome": "other annual income (parking, laundry, etc)",
-  "occupancy": "occupancy rate (0-100)",
-  "opex": "annual operating expenses",
-  "taxes": "annual property taxes",
-  "insurance": "annual insurance",
-  "expenseMaintenance": "annual maintenance",
-  "expenseManagement": "annual management fee",
-  "expenseReserves": "annual reserves",
-  "expenseUtilities": "annual utilities",
-  "commonFees": "HOA or common area fees",
-  "managementPct": "management fee as % of income",
-  "cashLeftInDeal": "cash remaining in deal post-close",
-  "cashRemainingAfterRefinance": "cash remaining after refi event",
-  "refiCashOut": "cash pulled out at refi",
-  "lpPrefRate": "LP preferred return rate (annual %)",
-  "lpProfitShare": "LP share of profits after pref (%)",
-  "ltv": "loan-to-value ratio (decimal: 0.70 = 70%)",
-  "interestRate": "primary loan interest rate (decimal)",
-  "amortizationYears": "amortization period (years)",
-  "holdPeriod": "holding period (years)",
-  "rentGrowth": "annual rent growth assumption (decimal)",
-  "expenseGrowth": "annual expense growth assumption (decimal)",
-  "exitCapRate": "exit/terminal cap rate (decimal)",
-  "targetIRR": "target IRR (%)",
-  "targetCoC": "target cash-on-cash return (%)",
-  "capex": "capital expenditure",
-  "extraction_notes": "brief note if any values were ambiguous or if review is recommended"
-}`;
+        const documents = normalizeDocuments(files, modelOut.documents || []);
+        const semantic_map = normalizeSemanticMap(modelOut.semantic_map, files);
+        const extracted = normalizeExtracted(modelOut.extracted || {});
+        const cross_checks = runCrossChecks(extracted);
+        const quality = computeQuality(extracted, cross_checks, documents);
 
-    parts.push({
-      type: "text",
-      text: `Extract underwriting data from these documents using semantic understanding.
-You are analyzing real estate deal documents. Read each section carefully, understand the document structure and labels, and extract values accordingly.
-Map loan/equity/cost items by their labels and meaning, not by position.
-Return ONLY the JSON object (no markdown, no explanations).
-If a value is ambiguous or missing, use null. Include extraction_notes if you had to interpret something.`
-    });
-
-    const extractedRaw = testMode
-      ? quickExtractFromCsv(files)
-      : safeJsonParse((await callAnthropic(parts, extractionSystem)).content?.map(c => c.text || "").join("\n"));
-
-    const extracted = normalizeExtraction(extractedRaw);
-
-    // Validate extraction integrity for DCF handoff
-    const validationIssues = validateExtractionForDcf(extracted);
-    if (validationIssues.length > 0) {
-      if (!extracted.extraction_review_flags) {
-        extracted.extraction_review_flags = [];
+        payload = {
+          documents,
+          semantic_map,
+          extracted,
+          cross_checks,
+          needs_review: modelOut.needs_review ?? quality.needs_review,
+          quality_score: Number.isFinite(Number(modelOut.quality_score)) ? Number(modelOut.quality_score) : quality.quality_score,
+          missing_evidence: Array.isArray(modelOut.missing_evidence) ? modelOut.missing_evidence : quality.missing_evidence,
+          cross_check_failures: Array.isArray(modelOut.cross_check_failures) ? modelOut.cross_check_failures : quality.cross_check_failures,
+          doc_coverage: modelOut.doc_coverage && typeof modelOut.doc_coverage === "object" ? modelOut.doc_coverage : quality.doc_coverage,
+          missing_docs: Array.isArray(modelOut.missing_docs) ? modelOut.missing_docs : quality.missing_docs,
+          summary: modelOut.summary || quality.summary,
+        };
       }
-      extracted.extraction_review_flags.push(...validationIssues);
+    } catch (e) {
+      pass_errors.push(`pipeline_error: ${e.message}`);
+      const fallback = buildTestModeResult(files);
+      payload = {
+        ...fallback,
+        needs_review: true,
+        summary: "Partial extraction returned due to pipeline error. Review recommended.",
+      };
     }
 
     const nextCredits = Math.max(0, credits - 1);
@@ -376,9 +511,30 @@ If a value is ambiguous or missing, use null. Include extraction_notes if you ha
       });
     }
 
-    return res.status(200).json({ extracted, creditsRemaining: nextCredits });
+    logQualityScore({
+      at: new Date().toISOString(),
+      quality_score: payload.quality_score,
+      needs_review: payload.needs_review,
+      cross_check_failures: payload.cross_check_failures?.length || 0,
+      missing_evidence: payload.missing_evidence?.length || 0,
+      docs: payload.documents?.map(d => ({ filename: d.filename, type: d.doc_type, conf: d.doc_type_confidence })) || [],
+    });
+
+    return res.status(200).json({ ...payload, pass_errors, creditsRemaining: nextCredits });
   } catch (error) {
-    const status = error.message === "Unauthorized" ? 401 : 500;
-    return res.status(status).json({ error: error.message || "Extraction failed" });
+    // return partial envelope instead of hard-empty 500
+    const extracted = normalizeExtracted({});
+    const cross_checks = runCrossChecks(extracted);
+    const quality = computeQuality(extracted, cross_checks, []);
+    return res.status(200).json({
+      documents: [],
+      semantic_map: { documents: {} },
+      extracted,
+      cross_checks,
+      ...quality,
+      pass_errors: [...pass_errors, `fatal_error: ${error.message || "Extraction failed"}`],
+      error: error.message || "Extraction failed",
+      creditsRemaining: credits,
+    });
   }
 }
