@@ -78,6 +78,135 @@ function csvToStructuredText(file) {
   return lines.map((l, i) => `${i + 1}| ${l}`).join("\n").slice(0, 100000);
 }
 
+function isNumericLike(v) {
+  if (v == null) return false;
+  const s = String(v).trim();
+  if (!s) return false;
+  if (/^-?\d+(?:\.\d+)?%$/.test(s)) return true;
+  if (/^\(?\$?-?\d[\d,]*(?:\.\d+)?\)?$/.test(s)) return true;
+  return false;
+}
+
+function inferLikelyPurpose(name, headers = []) {
+  const n = String(name || "").toLowerCase();
+  const h = headers.map(x => String(x || "").toLowerCase()).join(" ");
+  if (n.includes("rent") || h.includes("unit") || h.includes("tenant")) return "rent_roll";
+  if (n.includes("cash flow") || h.includes("noi") || h.includes("debt service")) return "pro_forma";
+  if (n.includes("draw") || n.includes("budget") || h.includes("construction")) return "expense_detail";
+  return "mixed";
+}
+
+function parseSpreadsheetSemanticMap(file) {
+  const buf = Buffer.from(file.data, "base64");
+  const wb = XLSX.read(buf, { type: "buffer" });
+  const sections = [];
+  const tables = [];
+  const key_value_pairs = [];
+
+  for (const tabName of wb.SheetNames.slice(0, 20)) {
+    const sheet = wb.Sheets[tabName];
+    const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: false });
+
+    const snippet = rows.slice(0, 8).map(r => (r || []).join(" | ")).join(" ").slice(0, 300);
+    sections.push({
+      title: tabName,
+      page: sections.length + 1,
+      content_type: "mixed",
+      raw_text_snippet: snippet,
+      detected_entities: ["price", "units", "income", "expenses", "loan", "ltv"],
+    });
+
+    const nonEmptyRows = rows.filter(r => Array.isArray(r) && r.some(c => String(c ?? "").trim() !== ""));
+    const headerRow = nonEmptyRows.find(r => (r || []).some(c => /year\s*\d|month|noi|debt service|cash flow|rent/i.test(String(c || ""))));
+    if (headerRow) {
+      tables.push({
+        page: sections.length,
+        headers: headerRow.filter(Boolean).slice(0, 20),
+        row_count: rows.length,
+        likely_purpose: inferLikelyPurpose(tabName, headerRow),
+      });
+    }
+
+    // Vertical label-value extraction: col A label + nearby numeric/percent value
+    for (let i = 0; i < rows.length; i++) {
+      const r = rows[i] || [];
+      for (let j = 0; j < Math.min(r.length, 8); j++) {
+        const label = String(r[j] ?? "").trim();
+        if (!label || label.length < 2 || isNumericLike(label)) continue;
+        if (/^(year\s*\d+|month|notes?)$/i.test(label)) continue;
+
+        let rawValue = null;
+        let valueCol = j + 1;
+        for (let k = j + 1; k < Math.min(r.length, j + 11); k++) {
+          const cand = String(r[k] ?? "").trim();
+          if (cand && isNumericLike(cand)) {
+            rawValue = cand;
+            valueCol = k;
+            break;
+          }
+        }
+
+        if (!rawValue && /^(year\s*1|y1)$/i.test(String((rows[0] || [])[j + 1] || ""))) {
+          const cand = String((rows[i] || [])[j + 1] ?? "").trim();
+          if (cand && isNumericLike(cand)) {
+            rawValue = cand;
+            valueCol = j + 1;
+          }
+        }
+
+        if (rawValue) {
+          key_value_pairs.push({
+            label,
+            raw_value: rawValue,
+            page: sections.length,
+            section: tabName,
+            tab_name: tabName,
+            row_index: i + 1,
+            col_index: j + 1,
+          });
+        }
+      }
+    }
+
+    // Horizontal time-series extraction: Year 1 values from header row tables
+    for (let i = 0; i < rows.length; i++) {
+      const r = rows[i] || [];
+      let year1Col = -1;
+      for (let j = 0; j < r.length; j++) {
+        const cell = String(r[j] ?? "").trim();
+        if (/^(year\s*1|y1)$/i.test(cell)) { year1Col = j; break; }
+      }
+      if (year1Col > 0) {
+        for (let rr = i + 1; rr < Math.min(rows.length, i + 300); rr++) {
+          const row = rows[rr] || [];
+          const label = String(row[0] ?? "").trim();
+          const v = String(row[year1Col] ?? "").trim();
+          if (!label || !v || !isNumericLike(v)) continue;
+          key_value_pairs.push({
+            label,
+            raw_value: v,
+            page: sections.length,
+            section: tabName,
+            tab_name: tabName,
+            row_index: rr + 1,
+            col_index: year1Col + 1,
+          });
+        }
+      }
+    }
+  }
+
+  return {
+    documents: {
+      [file.name]: {
+        sections,
+        tables,
+        key_value_pairs,
+      },
+    },
+  };
+}
+
 function emptyField(name) {
   return {
     value: null,
@@ -99,26 +228,78 @@ function normalizeDocuments(files, docs = []) {
     const got = byName.get(f.name) || {};
     const mime = f.mimeType || "application/octet-stream";
     const page_count = got.page_count ?? (mime === "application/pdf" ? estimatePdfPages(f) : 1);
+
+    let inferredType = got.doc_type || "unknown";
+    let inferredConfidence = got.doc_type_confidence || "low";
+    let inferredReason = got.classification_reasoning || "No confident document-type signal found.";
+
+    if (inferredType === "unknown" && (mime.includes("excel") || mime.includes("spreadsheetml"))) {
+      try {
+        const wb = XLSX.read(Buffer.from(f.data, "base64"), { type: "buffer" });
+        const names = wb.SheetNames.map(s => s.toLowerCase()).join(" ");
+        if (/draw schedule|construction|capital flow|refi/i.test(names)) {
+          inferredType = "construction_budget";
+          inferredConfidence = "high";
+          inferredReason = "Sheet names indicate development/construction budget and refinance structure.";
+        } else if (/rent roll/i.test(names)) {
+          inferredType = "rent_roll";
+          inferredConfidence = "high";
+          inferredReason = "Sheet names indicate rent roll structure.";
+        } else if (/t-?12|trailing/i.test(names)) {
+          inferredType = "t12";
+          inferredConfidence = "medium";
+          inferredReason = "Sheet names suggest trailing income statement pattern.";
+        }
+      } catch {
+        // keep unknown
+      }
+    }
+
     return {
       filename: f.name,
-      doc_type: got.doc_type || "unknown",
-      doc_type_confidence: got.doc_type_confidence || "low",
+      doc_type: inferredType,
+      doc_type_confidence: inferredConfidence,
       page_count: page_count || null,
-      classification_reasoning: got.classification_reasoning || "No confident document-type signal found.",
+      classification_reasoning: inferredReason,
     };
   });
 }
 
-function normalizeSemanticMap(map = {}, files = []) {
+function normalizeSemanticMap(map = {}, files = [], localMaps = {}) {
   const m = (map && typeof map === "object") ? map : {};
   const docMaps = (m.documents && typeof m.documents === "object") ? m.documents : {};
+  const localDocMaps = (localMaps && typeof localMaps === "object" && localMaps.documents && typeof localMaps.documents === "object") ? localMaps.documents : {};
   const normalized = { documents: {} };
+
   for (const f of files) {
     const d = docMaps[f.name] || {};
+    const ld = localDocMaps[f.name] || {};
+    const sections = [
+      ...(Array.isArray(ld.sections) ? ld.sections : []),
+      ...(Array.isArray(d.sections) ? d.sections : []),
+    ];
+    const tables = [
+      ...(Array.isArray(ld.tables) ? ld.tables : []),
+      ...(Array.isArray(d.tables) ? d.tables : []),
+    ];
+    const kv = [
+      ...(Array.isArray(ld.key_value_pairs) ? ld.key_value_pairs : []),
+      ...(Array.isArray(d.key_value_pairs) ? d.key_value_pairs : []),
+    ];
+
+    const kvDedup = [];
+    const seen = new Set();
+    for (const item of kv) {
+      const fp = `${item?.tab_name || item?.section || ""}|${item?.row_index || ""}|${item?.col_index || ""}|${item?.label || ""}|${item?.raw_value || ""}`;
+      if (seen.has(fp)) continue;
+      seen.add(fp);
+      kvDedup.push(item);
+    }
+
     normalized.documents[f.name] = {
-      sections: Array.isArray(d.sections) ? d.sections : [],
-      tables: Array.isArray(d.tables) ? d.tables : [],
-      key_value_pairs: Array.isArray(d.key_value_pairs) ? d.key_value_pairs : [],
+      sections,
+      tables,
+      key_value_pairs: kvDedup,
     };
   }
   return normalized;
@@ -265,6 +446,15 @@ function runCrossChecks(extracted) {
   return result;
 }
 
+function suggestionForMissingField(field, primaryDocType) {
+  if (primaryDocType === "construction_budget" && ["grossIncome", "opex", "occupancy", "exitCapRate"].includes(field)) {
+    return "Check Portfolio Cash Flow tab — Year 1 income assumptions should contain this value";
+  }
+  if (primaryDocType === "om") return "Request T-12 or rent roll from broker";
+  if (primaryDocType === "t12") return "Cross-reference with OM or rent roll";
+  return "Upload supporting document containing this field";
+}
+
 function computeQuality(extracted, crossChecks, documents) {
   const missingEvidence = [];
   const crossFailures = Object.entries(crossChecks)
@@ -272,6 +462,7 @@ function computeQuality(extracted, crossChecks, documents) {
     .map(([k]) => k);
 
   let needsReview = false;
+  const primaryDocType = (documents.find(d => d.doc_type && d.doc_type !== "unknown") || {}).doc_type || "unknown";
 
   for (const f of KEY_FIELDS) {
     const item = extracted[f];
@@ -281,7 +472,7 @@ function computeQuality(extracted, crossChecks, documents) {
         field: f,
         severity: "critical",
         reason: item?.value == null ? "Not found in any uploaded document" : "Low confidence extraction",
-        suggestion: `Provide clearer source evidence for ${f} (OM, T-12, rent roll, or debt term sheet).`,
+        suggestion: suggestionForMissingField(f, primaryDocType),
       });
     }
   }
@@ -293,7 +484,7 @@ function computeQuality(extracted, crossChecks, documents) {
         field: f,
         severity: "important",
         reason: "Missing from current extraction evidence",
-        suggestion: `Upload source docs that contain ${f} (or verify from broker package).`,
+        suggestion: suggestionForMissingField(f, primaryDocType),
       });
     }
   }
@@ -413,7 +604,12 @@ function buildParts(files) {
     } else if (mime === "text/csv") {
       parts.push({ type: "text", text: `FILE: ${f.name}\nTYPE: csv\n${csvToStructuredText(f)}` });
     } else if (mime.includes("excel") || mime.includes("spreadsheetml")) {
-      parts.push({ type: "text", text: `FILE: ${f.name}\nTYPE: spreadsheet\n${spreadsheetToStructuredText(f)}` });
+      const deep = parseSpreadsheetSemanticMap(f);
+      const kv = deep?.documents?.[f.name]?.key_value_pairs || [];
+      parts.push({
+        type: "text",
+        text: `FILE: ${f.name}\nTYPE: spreadsheet\nLAYOUT: full-grid-parse\n${spreadsheetToStructuredText(f)}\n\nPASS2_KEY_VALUE_PAIRS_JSON:\n${JSON.stringify(kv.slice(0, 1200))}`,
+      });
     } else {
       parts.push({ type: "text", text: `FILE: ${f.name}\nUnsupported mime ${mime} for direct parse.` });
     }
@@ -462,14 +658,24 @@ export default async function handler(req, res) {
 
     let payload;
     try {
+      const localSemantic = { documents: {} };
+      for (const f of files) {
+        const mime = f.mimeType || "";
+        if (mime.includes("excel") || mime.includes("spreadsheetml")) {
+          const parsed = parseSpreadsheetSemanticMap(f);
+          localSemantic.documents[f.name] = parsed.documents[f.name];
+        }
+      }
+
       if (testMode) {
         payload = buildTestModeResult(files);
+        payload.semantic_map = normalizeSemanticMap(payload.semantic_map, files, localSemantic);
       } else {
         const parts = buildParts(files);
         const modelOut = await callAnthropic(parts);
 
         const documents = normalizeDocuments(files, modelOut.documents || []);
-        const semantic_map = normalizeSemanticMap(modelOut.semantic_map, files);
+        const semantic_map = normalizeSemanticMap(modelOut.semantic_map, files, localSemantic);
         const extracted = normalizeExtracted(modelOut.extracted || {});
         const cross_checks = runCrossChecks(extracted);
         const quality = computeQuality(extracted, cross_checks, documents);
