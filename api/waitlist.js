@@ -1,3 +1,24 @@
+const ALLOWED_METADATA_FIELDS = [
+  'utm_source',
+  'utm_medium',
+  'utm_campaign',
+  'utm_term',
+  'utm_content',
+  'referrer',
+  'landing_path',
+  'signup_context',
+];
+
+function extractMetadata(input = {}) {
+  return ALLOWED_METADATA_FIELDS.reduce((acc, key) => {
+    const value = input[key];
+    if (typeof value === 'string' && value.trim()) {
+      acc[key] = value.trim().slice(0, 300);
+    }
+    return acc;
+  }, {});
+}
+
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
@@ -8,8 +29,10 @@ export default async function handler(req, res) {
   const LOOPS_API_KEY = process.env.LOOPS_API_KEY;
   if (!LOOPS_API_KEY) return res.status(500).json({ error: 'Loops API key not configured' });
 
-  const { email } = req.body;
+  const { email, ...rest } = req.body || {};
   if (!email || !email.includes('@')) return res.status(400).json({ error: 'Valid email required' });
+
+  const metadata = extractMetadata(rest);
 
   try {
     const response = await fetch('https://app.loops.so/api/v1/contacts/create', {
@@ -18,7 +41,12 @@ export default async function handler(req, res) {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${LOOPS_API_KEY}`,
       },
-      body: JSON.stringify({ email, source: 'proformai-waitlist', userGroup: 'waitlist' }),
+      body: JSON.stringify({
+        email,
+        source: 'proformai-waitlist',
+        userGroup: 'waitlist',
+        ...metadata,
+      }),
     });
     const data = await response.json();
     if (!response.ok) {

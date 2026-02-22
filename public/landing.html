@@ -707,10 +707,23 @@ async function handleSubmit(e) {
   btn.disabled = true;
   btn.style.opacity = '0.7';
   try {
+    const params = new URLSearchParams(window.location.search);
+    const payload = {
+      email,
+      utm_source: params.get('utm_source') || undefined,
+      utm_medium: params.get('utm_medium') || undefined,
+      utm_campaign: params.get('utm_campaign') || undefined,
+      utm_term: params.get('utm_term') || undefined,
+      utm_content: params.get('utm_content') || undefined,
+      referrer: document.referrer || undefined,
+      landing_path: window.location.pathname || '/',
+      signup_context: 'landing_waitlist',
+    };
+
     const res = await fetch('/api/waitlist', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email }),
+      body: JSON.stringify(payload),
     });
     const data = await res.json();
     if (data.success) {
