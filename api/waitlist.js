@@ -19,6 +19,42 @@ function extractMetadata(input = {}) {
   }, {});
 }
 
+function formatLeadAlert({ email, metadata }) {
+  const tags = [
+    metadata.utm_source,
+    metadata.utm_medium,
+    metadata.utm_campaign,
+  ].filter(Boolean).join(' / ');
+
+  const context = [
+    metadata.signup_context,
+    metadata.landing_path,
+  ].filter(Boolean).join(' · ');
+
+  return [
+    '🔥 New ProformAI waitlist lead',
+    `Email: ${email}`,
+    tags ? `UTM: ${tags}` : null,
+    context ? `Context: ${context}` : null,
+    metadata.referrer ? `Referrer: ${metadata.referrer}` : null,
+  ].filter(Boolean).join('\n');
+}
+
+async function sendLeadAlert({ email, metadata }) {
+  const webhookUrl = process.env.WAITLIST_ALERT_WEBHOOK_URL;
+  if (!webhookUrl) return;
+
+  try {
+    await fetch(webhookUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: formatLeadAlert({ email, metadata }) }),
+    });
+  } catch (error) {
+    console.error('waitlist alert failed', error?.message || error);
+  }
+}
+
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
@@ -56,6 +92,8 @@ export default async function handler(req, res) {
       }
       return res.status(response.status).json({ error: data.message || data.error || 'Failed to subscribe' });
     }
+
+    await sendLeadAlert({ email, metadata });
     return res.status(200).json({ success: true, message: 'subscribed' });
   } catch (error) {
     return res.status(500).json({ error: error.message });
