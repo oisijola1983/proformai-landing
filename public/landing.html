@@ -317,13 +317,16 @@ h1 em{font-style:italic;color:var(--accent)}
 .waitlist-form{
   display:flex;gap:12px;max-width:460px;margin:0 auto;position:relative;
 }
-.waitlist-form input{
+.waitlist-form input,
+.waitlist-form select{
   flex:1;padding:14px 20px;border-radius:8px;border:1px solid var(--border);
   background:var(--bg);color:var(--text);font-size:1rem;font-family:var(--sans);
   outline:none;transition:border-color 0.2s;
 }
-.waitlist-form input:focus{border-color:var(--accent)}
+.waitlist-form input:focus,
+.waitlist-form select:focus{border-color:var(--accent)}
 .waitlist-form input::placeholder{color:var(--text-dim)}
+.waitlist-form select option{background:#09090b;color:#f4f4f5}
 .waitlist-form button{
   padding:14px 28px;border-radius:8px;border:none;
   background:var(--accent);color:var(--bg);font-weight:600;
@@ -670,6 +673,30 @@ footer .links a:hover{color:var(--text)}
       <p class="cta-sub">Join the waitlist and get 5 free credits to underwrite your first deals. No card required.</p>
       <form class="waitlist-form" onsubmit="handleSubmit(event)">
         <input type="email" placeholder="you@yourfirm.com" required id="emailInput">
+        <select id="roleInput" aria-label="Your role">
+          <option value="" selected>Your role (optional)</option>
+          <option value="sponsor">Sponsor / GP</option>
+          <option value="broker">Broker</option>
+          <option value="acquisitions">Acquisitions team</option>
+          <option value="lender">Lender / debt advisor</option>
+          <option value="analyst">Analyst</option>
+          <option value="other">Other</option>
+        </select>
+        <select id="dealVolumeInput" aria-label="Deals underwritten per month">
+          <option value="" selected>Deals per month (optional)</option>
+          <option value="1_2">1–2</option>
+          <option value="3_5">3–5</option>
+          <option value="6_10">6–10</option>
+          <option value="11_25">11–25</option>
+          <option value="26_plus">26+</option>
+        </select>
+        <select id="timelineInput" aria-label="Buying timeline">
+          <option value="" selected>Buying timeline (optional)</option>
+          <option value="asap">Actively buying now</option>
+          <option value="this_month">Within 30 days</option>
+          <option value="this_quarter">This quarter</option>
+          <option value="researching">Just researching</option>
+        </select>
         <button type="submit" id="submitBtn">Join Waitlist →</button>
       </form>
       <p class="cta-note" id="formNote">We'll notify you when your spot opens up. No spam, ever.</p>
@@ -700,6 +727,9 @@ document.querySelectorAll('.reveal').forEach(el => observer.observe(el));
 async function handleSubmit(e) {
   e.preventDefault();
   const email = document.getElementById('emailInput').value.trim();
+  const role = document.getElementById('roleInput').value;
+  const dealVolume = document.getElementById('dealVolumeInput').value;
+  const timeline = document.getElementById('timelineInput').value;
   const btn = document.getElementById('submitBtn');
   const note = document.getElementById('formNote');
   const originalText = btn.textContent;
@@ -718,6 +748,9 @@ async function handleSubmit(e) {
       referrer: document.referrer || undefined,
       landing_path: window.location.pathname || '/',
       signup_context: 'landing_waitlist',
+      role: role || undefined,
+      deal_volume: dealVolume || undefined,
+      timeline: timeline || undefined,
     };
 
     const res = await fetch('/api/waitlist', {
@@ -735,6 +768,9 @@ async function handleSubmit(e) {
         : email + ' is on the list. We will be in touch soon.';
       note.style.color = 'var(--accent)';
       document.getElementById('emailInput').value = '';
+      document.getElementById('roleInput').value = '';
+      document.getElementById('dealVolumeInput').value = '';
+      document.getElementById('timelineInput').value = '';
     } else { throw new Error(data.error); }
   } catch (err) {
     btn.textContent = originalText;

@@ -7,6 +7,9 @@ const ALLOWED_METADATA_FIELDS = [
   'referrer',
   'landing_path',
   'signup_context',
+  'role',
+  'deal_volume',
+  'timeline',
 ];
 
 function extractMetadata(input = {}) {
@@ -17,6 +20,19 @@ function extractMetadata(input = {}) {
     }
     return acc;
   }, {});
+}
+
+function getLeadPriority(metadata = {}) {
+  const highIntentTimeline = ['asap', 'this_month'];
+  const highDealVolume = ['11_25', '26_plus'];
+
+  const timelineBoost = highIntentTimeline.includes(metadata.timeline) ? 1 : 0;
+  const volumeBoost = highDealVolume.includes(metadata.deal_volume) ? 1 : 0;
+  const score = timelineBoost + volumeBoost;
+
+  if (score >= 2) return 'high';
+  if (score === 1) return 'medium';
+  return 'normal';
 }
 
 function formatLeadAlert({ email, metadata }) {
@@ -31,9 +47,15 @@ function formatLeadAlert({ email, metadata }) {
     metadata.landing_path,
   ].filter(Boolean).join(' · ');
 
+  const priority = getLeadPriority(metadata);
+
   return [
     '🔥 New ProformAI waitlist lead',
     `Email: ${email}`,
+    `Priority: ${priority.toUpperCase()}`,
+    metadata.role ? `Role: ${metadata.role}` : null,
+    metadata.deal_volume ? `Deal volume: ${metadata.deal_volume}` : null,
+    metadata.timeline ? `Buying timeline: ${metadata.timeline}` : null,
     tags ? `UTM: ${tags}` : null,
     context ? `Context: ${context}` : null,
     metadata.referrer ? `Referrer: ${metadata.referrer}` : null,
