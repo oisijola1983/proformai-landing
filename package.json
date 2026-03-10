@@ -9,7 +9,13 @@
     "preview": "vite preview",
     "monitor": "node scripts/monitor-waitlist.js",
     "monitor:test": "node scripts/monitor-waitlist.js --test",
-    "monitor:webhook-test": "node scripts/monitor-waitlist.js --webhook-test"
+    "monitor:webhook-test": "node scripts/monitor-waitlist.js --webhook-test",
+    "test:integration": "node scripts/test-waitlist-integration.js",
+    "test:integration:verbose": "node scripts/test-waitlist-integration.js --verbose",
+    "analytics": "node scripts/analytics-dashboard.js",
+    "analytics:export": "node scripts/analytics-dashboard.js --export json",
+    "analytics:csv": "node scripts/analytics-dashboard.js --export csv",
+    "analytics:html": "node scripts/analytics-dashboard.js --export html"
   },
   "dependencies": {
     "@clerk/backend": "^2.31.0",
