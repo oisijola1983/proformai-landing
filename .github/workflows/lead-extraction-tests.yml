@@ -1,0 +1,130 @@
+name: Lead Extraction Quality Tests
+
+# Run on:
+# - Every push to main or pull requests
+# - Manual trigger
+# - Scheduled daily at 8 AM ET (1 PM UTC)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'docs/WAITLIST_LEAD_CAPTURE.md'
+      - 'scripts/test-lead-extraction.js'
+      - 'package.json'
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+  schedule:
+    # Daily at 8:00 AM ET (1:00 PM UTC)
+    - cron: '0 13 * * *'
+
+jobs:
+  test:
+    name: Lead Extraction Tests
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+          cache: 'npm'
+      
+      - name: Install dependencies
+        run: npm ci --prefer-offline --no-audit
+      
+      - name: Run lead extraction tests
+        run: node scripts/test-lead-extraction.js
+      
+      - name: Run monitoring health check
+        run: npm run monitor
+        env:
+          LOOPS_API_KEY: ${{ secrets.LOOPS_API_KEY }}
+      
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: test-results
+          path: |
+            .logs/
+            test-results/
+
+  integration-test:
+    name: Waitlist Integration Test
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+          cache: 'npm'
+      
+      - name: Install dependencies
+        run: npm ci --prefer-offline --no-audit
+      
+      - name: Run integration tests
+        run: npm run monitor:test
+        env:
+          LOOPS_API_KEY: ${{ secrets.LOOPS_API_KEY }}
+          VERCEL_URL: ${{ secrets.VERCEL_URL || 'http://localhost:3000' }}
+      
+      - name: Test webhook connectivity
+        run: npm run monitor:webhook-test
+        env:
+          WAITLIST_ALERT_WEBHOOK_URL: ${{ secrets.WAITLIST_ALERT_WEBHOOK_URL }}
+        if: env.WAITLIST_ALERT_WEBHOOK_URL != ''
+        continue-on-error: true
+      
+      - name: Upload integration test results
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: integration-test-results
+          path: .logs/
+
+  notify:
+    name: Notify Results
+    runs-on: ubuntu-latest
+    if: always()
+    needs: [test]
+    
+    steps:
+      - name: Determine status
+        id: status
+        run: |
+          if [ "${{ needs.test.result }}" = "success" ]; then
+            echo "status=✅ All lead extraction tests passed" >> $GITHUB_OUTPUT
+          else
+            echo "status=❌ Lead extraction tests failed" >> $GITHUB_OUTPUT
+          fi
+      
+      - name: Notify Slack
+        if: env.SLACK_WEBHOOK_URL != ''
+        uses: slackapi/slack-github-action@v1
+        with:
+          payload: |
+            {
+              "text": "${{ steps.status.outputs.status }}",
+              "blocks": [
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": "*ProformAI Lead Extraction Tests*\n${{ steps.status.outputs.status }}\n\nBranch: `${{ github.ref_name }}`\nCommit: `${{ github.sha }}`"
+                  }
+                }
+              ]
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK
