@@ -11,6 +11,7 @@ import {
 } from "@clerk/clerk-react";
 import { useEffect, useMemo, useState } from "react";
 import UnderwritingApp from "./UnderwritingApp.jsx";
+import WhyPage from "./WhyPage.jsx";
 
 const publishableKey = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY;
 const isTestMode = String(import.meta.env.VITE_TEST_MODE || "").toLowerCase() === "true";
@@ -179,6 +180,7 @@ function SignUpPage() {
 function AppRoutes() {
   return (
     <Routes>
+      <Route path="/why" element={<WhyPage />} />
       <Route path="/app/sign-in/*" element={<SignInPage />} />
       <Route path="/app/sign-up/*" element={<SignUpPage />} />
       <Route
